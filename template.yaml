@@ -1,0 +1,201 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: CampusFlow - manual notice ingestion, academic data, and private uploads.
+
+Parameters:
+  FrontendOrigin:
+    Type: String
+    Default: http://localhost:3000
+    Description: Frontend origin, without a trailing slash. Set to the Amplify origin when deploying.
+    AllowedPattern: '^https?://[^/]+$'
+  BedrockModelId:
+    Type: String
+    Default: ''
+    Description: Claude Sonnet model or inference profile ID. Empty leaves ingestion unconfigured.
+  BedrockInvokeArns:
+    Type: String
+    Default: ''
+    Description: Comma-separated exact model ARNs (and inference profile ARN when used) permitted for invocation.
+
+Conditions:
+  BedrockConfigured: !And
+    - !Not [!Equals [!Ref BedrockModelId, '']]
+    - !Not [!Equals [!Ref BedrockInvokeArns, '']]
+
+Globals:
+  Function:
+    Runtime: nodejs22.x
+    Architectures: [x86_64]
+    Timeout: 10
+    MemorySize: 128
+
+Resources:
+  CampusFlowApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: $default
+      CorsConfiguration:
+        AllowOrigins: [!Ref FrontendOrigin]
+        AllowMethods: [GET, POST]
+        AllowHeaders: [Content-Type]
+        MaxAge: 300
+
+  HealthFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: backend/
+      Handler: handlers/health.handler
+      Description: Liveness endpoint; no access to student data or external services.
+      Events:
+        Health:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CampusFlowApi
+            Path: /health
+            Method: GET
+
+  IngestionAndTruthEngine:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: backend/
+      Handler: handlers/ingest.handler
+      Description: Manual notice truth resolution and current event retrieval for demo-user.
+      Timeout: 28
+      MemorySize: 256
+      Environment:
+        Variables:
+          ACADEMIC_EVENTS_TABLE: !Ref AcademicEvents
+          STUDENT_PROFILE_TABLE: !Ref StudentProfile
+          BEDROCK_MODEL_ID: !If [BedrockConfigured, !Ref BedrockModelId, '']
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:Query
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+              Resource: !GetAtt AcademicEvents.Arn
+            - Effect: Allow
+              Action: dynamodb:GetItem
+              Resource: !GetAtt StudentProfile.Arn
+            - !If
+              - BedrockConfigured
+              - Effect: Allow
+                Action: bedrock:InvokeModel
+                Resource: !Split [',', !Ref BedrockInvokeArns]
+              - !Ref AWS::NoValue
+      Events:
+        Ingest:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CampusFlowApi
+            Path: /ingest
+            Method: POST
+            TimeoutInMillis: 29000
+        Events:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CampusFlowApi
+            Path: /events
+            Method: GET
+
+  StudentProfile:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: StudentProfile
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: userId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: userId
+          KeyType: HASH
+
+  AcademicEvents:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: AcademicEvents
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: userId
+          AttributeType: S
+        - AttributeName: eventId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: userId
+          KeyType: HASH
+        - AttributeName: eventId
+          KeyType: RANGE
+
+  ClassroomSyncState:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: ClassroomSyncState
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: userId
+          AttributeType: S
+        - AttributeName: courseId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: userId
+          KeyType: HASH
+        - AttributeName: courseId
+          KeyType: RANGE
+
+  ScheduleBlocks:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: ScheduleBlocks
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: userId
+          AttributeType: S
+        - AttributeName: date
+          AttributeType: S
+      KeySchema:
+        - AttributeName: userId
+          KeyType: HASH
+        - AttributeName: date
+          KeyType: RANGE
+
+  UploadBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+
+Outputs:
+  ApiBaseUrl:
+    Value: !Sub 'https://${CampusFlowApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}'
+  StudentProfileTable:
+    Value: !Ref StudentProfile
+  AcademicEventsTable:
+    Value: !Ref AcademicEvents
+  ClassroomSyncStateTable:
+    Value: !Ref ClassroomSyncState
+  ScheduleBlocksTable:
+    Value: !Ref ScheduleBlocks
+  UploadBucketName:
+    Value: !Ref UploadBucket
