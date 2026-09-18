@@ -18,9 +18,22 @@ Parameters:
     Description: Comma-separated Bedrock inference profile and foundation model ARNs permitted for invocation.
   AIProvider:
     Type: String
-    Default: bedrock
-    AllowedValues: [bedrock]
+    Default: groq
+    AllowedValues: [groq, bedrock]
     Description: Cloud AI provider. Ollama is intentionally restricted to local execution.
+  GroqApiKey:
+    Type: String
+    Default: ""
+    NoEcho: true
+    Description: Groq API key. Supply at deploy time; never store in source control.
+  GroqExtractionModel:
+    Type: String
+    Default: openai/gpt-oss-20b
+    Description: Groq model used for every Classroom extraction and truth resolution.
+  GroqReasoningModel:
+    Type: String
+    Default: openai/gpt-oss-120b
+    Description: Larger Groq model, selected only by an explicit reasoning-tier request.
   DailyStudyHours:
     Type: Number
     Default: 4
@@ -42,6 +55,9 @@ Parameters:
     NoEcho: true
 
 Conditions:
+  GroqConfigured: !And
+    - !Equals [!Ref AIProvider, groq]
+    - !Not [!Equals [!Ref GroqApiKey, ""]]
   BedrockConfigured: !And
     - !Equals [!Ref AIProvider, bedrock]
     - !Not [!Equals [!Ref BedrockModelId, '']]
@@ -101,6 +117,9 @@ Resources:
           OLLAMA_BASE_URL: ''
           OLLAMA_MODEL: qwen3:8b
           BEDROCK_MODEL_ID: !If [BedrockConfigured, !Ref BedrockModelId, '']
+          GROQ_API_KEY: !If [GroqConfigured, !Ref GroqApiKey, '']
+          GROQ_EXTRACTION_MODEL: !Ref GroqExtractionModel
+          GROQ_REASONING_MODEL: !Ref GroqReasoningModel
       Policies:
         - Statement:
             - Effect: Allow
@@ -157,6 +176,9 @@ Resources:
           OLLAMA_BASE_URL: ''
           OLLAMA_MODEL: qwen3:8b
           BEDROCK_MODEL_ID: !If [BedrockConfigured, !Ref BedrockModelId, '']
+          GROQ_API_KEY: !If [GroqConfigured, !Ref GroqApiKey, '']
+          GROQ_EXTRACTION_MODEL: !Ref GroqExtractionModel
+          GROQ_REASONING_MODEL: !Ref GroqReasoningModel
       Policies:
         - Statement:
             - Effect: Allow
@@ -224,6 +246,9 @@ Resources:
           OLLAMA_BASE_URL: ''
           OLLAMA_MODEL: qwen3:8b
           BEDROCK_MODEL_ID: !If [BedrockConfigured, !Ref BedrockModelId, '']
+          GROQ_API_KEY: !If [GroqConfigured, !Ref GroqApiKey, '']
+          GROQ_EXTRACTION_MODEL: !Ref GroqExtractionModel
+          GROQ_REASONING_MODEL: !Ref GroqReasoningModel
       Policies:
         - Statement:
             - Effect: Allow
@@ -318,6 +343,9 @@ Resources:
           OLLAMA_BASE_URL: ''
           OLLAMA_MODEL: qwen3:8b
           BEDROCK_MODEL_ID: !If [BedrockConfigured, !Ref BedrockModelId, '']
+          GROQ_API_KEY: !If [GroqConfigured, !Ref GroqApiKey, '']
+          GROQ_EXTRACTION_MODEL: !Ref GroqExtractionModel
+          GROQ_REASONING_MODEL: !Ref GroqReasoningModel
           GOOGLE_CLIENT_ID: !Ref GoogleClientId
           GOOGLE_CLIENT_SECRET: !Ref GoogleClientSecret
           GOOGLE_REDIRECT_URI: !Ref GoogleRedirectUri

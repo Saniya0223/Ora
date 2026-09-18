@@ -6,4 +6,6 @@ resolve_s3 = true
 capabilities = "CAPABILITY_IAM"
 confirm_changeset = true
 fail_on_empty_changeset = false
-parameter_overrides = "FrontendOrigin=\"https://your-branch.example.amplifyapp.com\" AIProvider=\"bedrock\" BedrockModelId=\"apac.amazon.nova-pro-v1:0\" DailyStudyHours=4"
+# GroqApiKey is NoEcho and must not be committed. Pass it on the command line:
+#   sam deploy --parameter-overrides GroqApiKey="gsk_..."
+parameter_overrides = "FrontendOrigin=\"https://your-branch.example.amplifyapp.com\" AIProvider=\"groq\" GroqExtractionModel=\"openai/gpt-oss-20b\" GroqReasoningModel=\"openai/gpt-oss-120b\" DailyStudyHours=4"

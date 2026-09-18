@@ -73,18 +73,33 @@ export const scheduleBlocksSchema = z.strictObject({
   })),
 });
 
+const truthEventDetails = z.strictObject({
+  title: z.string(),
+  type: eventType,
+  currentDeadline: localDeadline,
+  // A missing venue is legitimately null, which academicEventSchema already
+  // stores; models differ on whether they answer "" or null for "no venue".
+  venue: z.string().nullable(),
+  estimatedHours: hours,
+});
+
+// An IGNORE decision describes no event, so it has no honest deadline to state.
+// The acting branches still require a complete object; IGNORE may answer with {}
+// or omit the field, and ingestion discards eventDetails on IGNORE regardless.
+// Agreed as the explicit resolution to the open question in phase-1-decisions.
 export const truthResolutionSchema = z.strictObject({
   action: z.enum(["CREATE", "UPDATE", "CANCEL", "IGNORE"]),
   targetEventId: identifier.nullable(),
-  eventDetails: z.strictObject({
-    title: z.string(),
-    type: eventType,
-    currentDeadline: localDeadline,
-    venue: z.string(),
-    estimatedHours: hours,
-  }),
+  eventDetails: z.union([truthEventDetails, z.strictObject({}), z.null()]).optional(),
   changeSummary: z.string(),
 }).superRefine((result, context) => {
+  if (result.action !== "IGNORE" && !truthEventDetails.safeParse(result.eventDetails).success) {
+    context.addIssue({
+      code: "custom",
+      path: ["eventDetails"],
+      message: "CREATE, UPDATE, and CANCEL require complete event details",
+    });
+  }
   const needsTarget = result.action === "UPDATE" || result.action === "CANCEL";
   if (needsTarget === (result.targetEventId === null)) {
     context.addIssue({

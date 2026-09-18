@@ -2,6 +2,7 @@ node_modules/
 .next/
 out/
 .aws-sam/
+packaged*.yaml
 .cache/
 coverage/
 *.tsbuildinfo
@@ -11,6 +12,8 @@ coverage/
 !.env.example
 !**/.env.example
 samconfig.toml
+template.local.yaml
+sam.local.json
 backend/env.local.json
 client_secret*.json
 credentials*.json

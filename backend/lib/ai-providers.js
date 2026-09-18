@@ -3,6 +3,13 @@ import { parseAIResponse } from "./contracts.js";
 
 const DEFAULT_OLLAMA_URL = "http://localhost:11434";
 const DEFAULT_OLLAMA_MODEL = "qwen3:8b";
+const DEFAULT_GROQ_URL = "https://api.groq.com/openai/v1";
+const DEFAULT_GROQ_EXTRACTION_MODEL = "openai/gpt-oss-20b";
+const DEFAULT_GROQ_REASONING_MODEL = "openai/gpt-oss-120b";
+// GPT-OSS spends reasoning tokens from the same completion budget, so a caller
+// budget sized for the answer alone returns an empty generation and Groq
+// rejects it with json_validate_failed. Reserve headroom on top of the ask.
+const GROQ_REASONING_HEADROOM = 1024;
 const retryableStatus = (status) => status === 408 || status === 429 || status >= 500;
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 const lambdaRuntime = (env) => env.AWS_SAM_LOCAL !== "true"
@@ -94,6 +101,48 @@ async function fetchJSON(fetchImpl, url, init, provider, timeoutMs) {
   }
 }
 
+// Groq speaks the OpenAI chat-completions dialect. Two GPT-OSS models are
+// configured: the 20B model runs every Classroom extraction, and the 120B model
+// is selected only by an explicit `tier: "reasoning"` request, so routine
+// syncing never pays for the larger model.
+export class GroqProvider extends AIProvider {
+  constructor({ apiKey, extractionModel = DEFAULT_GROQ_EXTRACTION_MODEL, reasoningModel = DEFAULT_GROQ_REASONING_MODEL, reasoningEffort = "low", baseUrl = DEFAULT_GROQ_URL, fetchImpl = globalThis.fetch } = {}) {
+    super("groq");
+    if (!apiKey) throw new AIProviderError("NOT_CONFIGURED", "Groq requires GROQ_API_KEY.", { provider: this.name });
+    if (typeof fetchImpl !== "function") throw new AIProviderError("NOT_CONFIGURED", "Groq requires fetch support.", { provider: this.name });
+    this.apiKey = apiKey;
+    this.extractionModel = extractionModel;
+    this.reasoningModel = reasoningModel;
+    this.reasoningEffort = reasoningEffort;
+    this.baseUrl = baseUrl.replace(new RegExp("/+$"), "");
+    this.fetchImpl = fetchImpl;
+  }
+
+  modelFor(tier) { return tier === "reasoning" ? this.reasoningModel : this.extractionModel; }
+
+  async generate({ system, prompt, maxTokens, temperature = 0, timeoutMs = 20_000, tier = "extraction" }) {
+    const result = await fetchJSON(this.fetchImpl, `${this.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${this.apiKey}` },
+      body: JSON.stringify({
+        model: this.modelFor(tier),
+        messages: [{ role: "system", content: system }, { role: "user", content: prompt }],
+        temperature,
+        max_completion_tokens: maxTokens + GROQ_REASONING_HEADROOM,
+        reasoning_effort: this.reasoningEffort,
+        response_format: { type: "json_object" },
+        stream: false,
+      }),
+    }, this.name, timeoutMs);
+    const choice = result.choices?.[0];
+    const content = choice?.message?.content;
+    if (typeof content !== "string" || !content.trim() || choice.finish_reason === "length") {
+      throw new AIProviderError("INVALID_RESPONSE", "Groq returned an incomplete response.", { provider: this.name });
+    }
+    return content;
+  }
+}
+
 export class OllamaProvider extends AIProvider {
   constructor({ baseUrl = DEFAULT_OLLAMA_URL, model = DEFAULT_OLLAMA_MODEL, fetchImpl = globalThis.fetch } = {}) {
     super("ollama");
@@ -124,21 +173,39 @@ export class OllamaProvider extends AIProvider {
 }
 
 export function isAIConfigured(env = process.env) {
-  const choice = env.AI_PROVIDER?.trim().toLowerCase();
-  if (!choice) return Boolean(env.BEDROCK_MODEL_ID);
+  const choice = env.AI_PROVIDER?.trim().toLowerCase() || implicitChoice(env);
+  if (choice === "groq") return Boolean(env.GROQ_API_KEY);
   if (choice === "ollama") return !lambdaRuntime(env);
   if (choice === "bedrock") return Boolean(env.BEDROCK_MODEL_ID);
   return false;
 }
 
+// Ollama is never chosen implicitly: it is a laptop-only provider, so falling
+// back to it silently would make a misconfigured deployment look healthy.
+function implicitChoice(env) {
+  if (env.GROQ_API_KEY) return "groq";
+  if (env.BEDROCK_MODEL_ID) return "bedrock";
+  return "";
+}
+
 export function createAIProvider({ env = process.env, bedrock, fetchImpl = globalThis.fetch } = {}) {
-  const choice = env.AI_PROVIDER?.trim().toLowerCase() || (env.BEDROCK_MODEL_ID ? "bedrock" : "ollama");
+  const choice = env.AI_PROVIDER?.trim().toLowerCase() || implicitChoice(env);
+  if (choice === "groq") {
+    return new GroqProvider({
+      apiKey: env.GROQ_API_KEY,
+      extractionModel: env.GROQ_EXTRACTION_MODEL || DEFAULT_GROQ_EXTRACTION_MODEL,
+      reasoningModel: env.GROQ_REASONING_MODEL || DEFAULT_GROQ_REASONING_MODEL,
+      reasoningEffort: env.GROQ_REASONING_EFFORT || "low",
+      baseUrl: env.GROQ_BASE_URL || DEFAULT_GROQ_URL,
+      fetchImpl,
+    });
+  }
   if (choice === "ollama") {
     if (lambdaRuntime(env)) throw new AIProviderError("UNSAFE_CONFIGURATION", "AWS Lambda cannot use a laptop Ollama endpoint.", { provider: choice });
     return new OllamaProvider({ baseUrl: env.OLLAMA_BASE_URL || DEFAULT_OLLAMA_URL, model: env.OLLAMA_MODEL || DEFAULT_OLLAMA_MODEL, fetchImpl });
   }
   if (choice === "bedrock") return new BedrockProvider({ client: bedrock, modelId: env.BEDROCK_MODEL_ID });
-  throw new AIProviderError("NOT_CONFIGURED", "AI_PROVIDER must be ollama or bedrock.", { provider: choice });
+  throw new AIProviderError("NOT_CONFIGURED", "AI_PROVIDER must be groq, bedrock, or ollama.", { provider: choice });
 }
 
 export function providerFrom(dependencies = {}) {

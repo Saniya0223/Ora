@@ -68,9 +68,27 @@ test("unexpected fields, unknown actions, and unknown event types are rejected",
   }
 });
 
-test("Prompt 1 does not silently relax eventDetails for IGNORE or CANCEL", () => {
-  assert.equal(truthResolutionSchema.safeParse({ ...truth, action: "IGNORE", eventDetails: null }).success, false);
+test("a missing venue may be null or empty, matching what is stored", () => {
+  // gpt-oss answers null where other models answer ""; academicEventSchema
+  // already stores venue as nullable, so both must parse.
+  assert.equal(truthResolutionSchema.safeParse({ ...truth, eventDetails: { ...truth.eventDetails, venue: null } }).success, true);
+  assert.equal(truthResolutionSchema.safeParse({ ...truth, eventDetails: { ...truth.eventDetails, venue: "" } }).success, true);
+  assert.equal(truthResolutionSchema.safeParse({ ...truth, eventDetails: { ...truth.eventDetails, venue: 7 } }).success, false);
+});
+
+test("only IGNORE may omit eventDetails; the acting branches still require them", () => {
+  // IGNORE carries no event, so an empty, null, or absent object is accepted and
+  // no deadline is invented. Ingestion discards eventDetails on IGNORE.
+  const { eventDetails, ...withoutDetails } = truth;
+  assert.equal(truthResolutionSchema.safeParse({ ...truth, action: "IGNORE", eventDetails: null }).success, true);
+  assert.equal(truthResolutionSchema.safeParse({ ...truth, action: "IGNORE", eventDetails: {} }).success, true);
+  assert.equal(truthResolutionSchema.safeParse({ ...withoutDetails, action: "IGNORE" }).success, true);
+
+  // CREATE, UPDATE, and CANCEL must still carry a complete object.
   assert.equal(truthResolutionSchema.safeParse({ ...truth, action: "CANCEL", targetEventId: eventId, eventDetails: null }).success, false);
+  assert.equal(truthResolutionSchema.safeParse({ ...truth, action: "CANCEL", targetEventId: eventId, eventDetails: {} }).success, false);
+  assert.equal(truthResolutionSchema.safeParse({ ...withoutDetails, action: "CREATE" }).success, false);
+  assert.equal(truthResolutionSchema.safeParse({ ...truth, action: "UPDATE", targetEventId: eventId, eventDetails: { title: "Partial" } }).success, false);
 });
 
 test("narrative hours retain allocateHours; database blocks retain allocatedHours and eventId", () => {

@@ -5,6 +5,7 @@ import { GetCommand, PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { studentProfileSchema } from "./contracts.js";
 import { DEMO_USER_ID, ingestNotice } from "./ingestion.js";
 import { IngestionError } from "./errors.js";
+import { campusDateTime } from "./time.js";
 
 const scopes = [
   "https://www.googleapis.com/auth/classroom.courses.readonly",
@@ -73,7 +74,17 @@ export async function allPages(call, field) {
 }
 
 const safe = (value) => String(value ?? "").replace(/[\r\n]+/g, " ").trim();
-const courseworkDeadline = (item) => item.dueDate ? `${item.dueDate.year}-${String(item.dueDate.month).padStart(2, "0")}-${String(item.dueDate.day).padStart(2, "0")}T${String(item.dueTime?.hours ?? 23).padStart(2, "0")}:${String(item.dueTime?.minutes ?? 59).padStart(2, "0")}` : "no deadline";
+// The Classroom API reports dueDate and dueTime in UTC, while the prompt speaks
+// campus-local time, so the instant is converted rather than its fields copied.
+// Google omits zero-valued fields, so a present dueTime defaults each part to 0.
+// dueTime accompanies every dueDate per the API; the end-of-day fallback only
+// covers a malformed item.
+const courseworkDeadline = (item) => {
+  if (!item.dueDate) return "no deadline";
+  const { year, month, day } = item.dueDate;
+  if (!item.dueTime) return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}T23:59`;
+  return campusDateTime(Date.UTC(year, month - 1, day, item.dueTime.hours ?? 0, item.dueTime.minutes ?? 0));
+};
 export function classroomText(course, item, kind) {
   if (kind === "coursework") return `[Classroom] ${safe(course.name)}: Coursework '${safe(item.title)}'${item.description ? ` — ${safe(item.description)}` : ""}; due ${courseworkDeadline(item)}.`;
   return `[Classroom] ${safe(course.name)}: Announcement '${safe(item.text)}'.`;
@@ -83,6 +94,7 @@ export async function syncClassroom({ db, ai, bedrock, env, Classroom = classroo
   const { client, profile: current } = await connectedClient({ db, env, OAuth2 });
   const api = new Classroom({ auth: client });
   let processed = 0;
+  let failed = 0;
   for (const courseId of current.connectedCourses) {
     const sync = await db.send(new GetCommand({ TableName: env.CLASSROOM_SYNC_STATE_TABLE, Key: { userId: DEMO_USER_ID, courseId }, ConsistentRead: true }));
     const floor = sync.Item?.lastSyncedAt;
@@ -95,13 +107,24 @@ export async function syncClassroom({ db, ai, bedrock, env, Classroom = classroo
       ...announcements.map((item) => ({ item, kind: "announcement" })),
       ...coursework.map((item) => ({ item, kind: "coursework" })),
     ].filter(({ item }) => !floor || Date.parse(item.updateTime) > Date.parse(floor)).sort((a, b) => Date.parse(a.item.updateTime) - Date.parse(b.item.updateTime));
+    // One unparseable announcement must not abandon the rest of the course.
+    // ingestNotice is idempotent per source item (UUID v5 over the notice text),
+    // so replaying a course after a failure cannot duplicate an event.
     for (const { item, kind } of items) {
       const sourceRef = `${courseId}:${kind}:${item.id}`;
-      await ingestNotice({ text: classroomText(course, item, kind), sourceType: "classroom", sourceRef }, { db, ai, bedrock, env, tableName: env.ACADEMIC_EVENTS_TABLE, profileTableName: env.STUDENT_PROFILE_TABLE, modelId: env.BEDROCK_MODEL_ID, now });
-      processed++;
+      try {
+        await ingestNotice({ text: classroomText(course, item, kind), sourceType: "classroom", sourceRef }, { db, ai, bedrock, env, tableName: env.ACADEMIC_EVENTS_TABLE, profileTableName: env.STUDENT_PROFILE_TABLE, modelId: env.BEDROCK_MODEL_ID, now });
+        processed++;
+      } catch (error) {
+        failed++;
+        // Never log notice text, model output, or credentials: codes only.
+        console.error(JSON.stringify({ code: "CLASSROOM_ITEM_FAILED", courseId, kind, itemId: item.id, reason: error?.code ?? error?.name ?? "UNKNOWN" }));
+      }
     }
+    // The watermark only advances on a clean pass, so a failed item is retried
+    // on the next cycle instead of being skipped permanently.
     const newest = [...announcements, ...coursework].map((item) => item.updateTime).filter(Boolean).sort().at(-1);
-    if (newest && (!floor || Date.parse(newest) > Date.parse(floor))) await db.send(new PutCommand({ TableName: env.CLASSROOM_SYNC_STATE_TABLE, Item: { userId: DEMO_USER_ID, courseId, lastSyncedAt: newest } }));
+    if (!failed && newest && (!floor || Date.parse(newest) > Date.parse(floor))) await db.send(new PutCommand({ TableName: env.CLASSROOM_SYNC_STATE_TABLE, Item: { userId: DEMO_USER_ID, courseId, lastSyncedAt: newest } }));
   }
-  return { processed };
+  return { processed, failed };
 }

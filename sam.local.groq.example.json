@@ -1,0 +1,26 @@
+{
+  "IngestionAndTruthEngine": {
+    "AI_PROVIDER": "groq",
+    "GROQ_API_KEY": "",
+    "GROQ_EXTRACTION_MODEL": "openai/gpt-oss-20b",
+    "GROQ_REASONING_MODEL": "openai/gpt-oss-120b"
+  },
+  "TimelineAndConflictEngine": {
+    "AI_PROVIDER": "groq",
+    "GROQ_API_KEY": "",
+    "GROQ_EXTRACTION_MODEL": "openai/gpt-oss-20b",
+    "GROQ_REASONING_MODEL": "openai/gpt-oss-120b"
+  },
+  "DocumentFunction": {
+    "AI_PROVIDER": "groq",
+    "GROQ_API_KEY": "",
+    "GROQ_EXTRACTION_MODEL": "openai/gpt-oss-20b",
+    "GROQ_REASONING_MODEL": "openai/gpt-oss-120b"
+  },
+  "ClassroomSyncEngine": {
+    "AI_PROVIDER": "groq",
+    "GROQ_API_KEY": "",
+    "GROQ_EXTRACTION_MODEL": "openai/gpt-oss-20b",
+    "GROQ_REASONING_MODEL": "openai/gpt-oss-120b"
+  }
+}

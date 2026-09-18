@@ -13,7 +13,8 @@
   ],
   "scripts": {
     "test": "node --test",
-    "test:ollama": "node scripts/ollama-live-check.js"
+    "test:ollama": "node scripts/ollama-live-check.js",
+    "test:groq": "node scripts/groq-live-check.js"
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "3.1133.0",

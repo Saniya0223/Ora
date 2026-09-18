@@ -95,7 +95,7 @@ export async function ingestNotice(input, dependencies) {
     ...eventDetails,
     title: eventDetails.title.trim(),
     currentDeadline: new Date(deadlineInstant(eventDetails.currentDeadline)).toISOString(),
-    venue: eventDetails.venue.trim() || null,
+    venue: (eventDetails.venue ?? "").trim() || null,
   };
   if (!details.title) throw new IngestionError(502, "INVALID_MODEL_RESPONSE", "The notice did not identify an event title.");
   const historyEntry = `${receivedAt.toISOString()} — ${changeSummary || `Event ${action.toLowerCase()}.`}`;
