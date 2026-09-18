@@ -1,0 +1,47 @@
+"use client";
+
+import { useEffect, useState } from "react";
+
+type Slot = { day: string; startTime: string; endTime: string; subject: string; type: "Lecture" | "Lab" | "Tutorial"; room: string };
+const api = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "");
+const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+const blank: Slot = { day: "Monday", startTime: "09:00", endTime: "10:00", subject: "", type: "Lecture", room: "" };
+const call = async (path: string, init?: RequestInit) => { const response = await fetch(`${api}${path}`, init); const body = await response.json().catch(() => ({})); if (!response.ok) throw new Error(body.error?.message ?? "The request could not be completed."); return body; };
+
+export default function SetupPanel({ onChange }: { onChange: () => void }) {
+  const [profile, setProfile] = useState({ name: "", program: "", year: "", section: "" });
+  const [slots, setSlots] = useState<Slot[]>([]);
+  const [courses, setCourses] = useState<{ id: string; name: string; section: string }[]>([]);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { if (!api) return; void Promise.all([call("/profile"), call("/timetable")]).then(([p, t]) => { if (p.profile) { setProfile(p.profile); setSelected(p.profile.connectedCourses ?? []); } setSlots(t.slots ?? []); }).catch((error) => setMessage(error.message)); }, []);
+  const saveProfile = async (event: React.FormEvent) => { event.preventDefault(); setBusy(true); try { await call("/profile", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(profile) }); setMessage("Profile saved."); } catch (error) { setMessage(error instanceof Error ? error.message : "Profile could not be saved."); } finally { setBusy(false); } };
+  const upload = async (event: React.ChangeEvent<HTMLInputElement>, kind: "notice" | "timetable") => {
+    const file = event.target.files?.[0]; if (!file || !api) return; setBusy(true); setMessage("");
+    try {
+      if (file.type !== "application/pdf" || file.size > 10 * 1024 * 1024) throw new Error("Choose a PDF no larger than 10 MB.");
+      const upload = await call("/uploads", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ fileName: file.name, contentType: file.type, size: file.size }) });
+      const form = new FormData(); Object.entries(upload.fields).forEach(([key, value]) => form.append(key, String(value))); form.append("file", file);
+      const put = await fetch(upload.url, { method: "POST", body: form }); if (!put.ok) throw new Error("The PDF upload failed. Please retry.");
+      const started = await call(kind === "notice" ? "/ingest" : "/timetable", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ s3Key: upload.s3Key }) });
+      let job = started;
+      for (let attempt = 0; job.status === "PROCESSING" && attempt < 30; attempt++) { await new Promise((resolve) => setTimeout(resolve, 2_000)); job = await call(`/documents/${job.jobId}`); }
+      if (job.status === "PROCESSING") throw new Error("The PDF is still processing. Check back in a moment.");
+      if (job.status !== "SUCCEEDED") throw new Error(job.error ?? "The PDF could not be read.");
+      if (kind === "notice") { setMessage(job.result.changeSummary ?? "Notice processed."); onChange(); }
+      else { setSlots(job.result.slots ?? []); setMessage(job.result.lowConfidenceRows?.length ? `Review ${job.result.lowConfidenceRows.length} uncertain timetable row(s), then save.` : "Review the timetable, then save."); }
+    } catch (error) { setMessage(error instanceof Error ? error.message : "The PDF could not be processed."); } finally { setBusy(false); event.target.value = ""; }
+  };
+  const saveSlots = async () => { setBusy(true); try { await call("/timetable", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ slots }) }); setMessage("Timetable saved."); onChange(); } catch (error) { setMessage(error instanceof Error ? error.message : "Timetable could not be saved."); } finally { setBusy(false); } };
+  const connect = async () => { try { const value = await call("/classroom/connect"); window.location.assign(value.url); } catch (error) { setMessage(error instanceof Error ? error.message : "Classroom could not be connected."); } };
+  const loadCourses = async () => { try { const value = await call("/classroom/courses"); setCourses(value.courses ?? []); } catch (error) { setMessage(error instanceof Error ? error.message : "Courses could not be loaded."); } };
+  const saveCourses = async () => { setBusy(true); try { await call("/classroom/courses", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ courseIds: selected }) }); setMessage("Selected Classroom courses will now sync every 15 minutes."); } catch (error) { setMessage(error instanceof Error ? error.message : "Courses could not be saved."); } finally { setBusy(false); } };
+  if (!api) return null;
+  return <section className="mt-12 border-t border-rule pt-7" aria-labelledby="setup-heading"><h2 id="setup-heading" className="font-display text-3xl">Set up your workspace</h2>{message && <p role="status" className="mt-4 border-l-2 border-accent pl-4 text-sm leading-6">{message}</p>}
+    <div className="mt-7 grid gap-10 lg:grid-cols-2"><form onSubmit={saveProfile}><h3 className="text-lg font-bold">Student profile</h3><div className="mt-4 grid gap-3 sm:grid-cols-2">{(["name", "program", "year", "section"] as const).map((key) => <label key={key} className="text-sm"><span className="mb-1 block font-bold capitalize">{key}</span><input required value={profile[key]} onChange={(event) => setProfile({ ...profile, [key]: event.target.value })} className="w-full rounded-sm border border-rule bg-white p-2" /></label>)}</div><button disabled={busy} className="mt-4 rounded-sm bg-ink px-4 py-2 text-sm font-bold text-white disabled:opacity-50">Save profile</button></form>
+      <div><h3 className="text-lg font-bold">Google Classroom</h3><p className="mt-2 text-sm leading-6 text-muted">Read announcements and coursework from courses you choose.</p><div className="mt-4 flex flex-wrap gap-3"><button type="button" onClick={connect} className="rounded-sm bg-accent px-4 py-2 text-sm font-bold text-white">Connect Google Classroom</button><button type="button" onClick={loadCourses} className="rounded-sm border border-rule px-4 py-2 text-sm font-bold">Choose courses</button></div>{courses.length > 0 && <div className="mt-4 space-y-2">{courses.map((course) => <label key={course.id} className="flex gap-2 text-sm"><input type="checkbox" checked={selected.includes(course.id)} onChange={() => setSelected(selected.includes(course.id) ? selected.filter((id) => id !== course.id) : [...selected, course.id])} />{course.name}{course.section ? ` · ${course.section}` : ""}</label>)}<button type="button" onClick={saveCourses} disabled={busy} className="mt-2 rounded-sm border border-rule px-4 py-2 text-sm font-bold">Save selected courses</button></div>}</div></div>
+    <div className="mt-10"><h3 className="text-lg font-bold">PDF imports</h3><p className="mt-2 text-sm text-muted">Upload a notice or timetable PDF (up to 10 MB). Timetables always need your review before they are saved.</p><div className="mt-4 flex flex-wrap gap-4 text-sm"><label className="rounded-sm border border-rule px-4 py-2 font-bold">Upload notice PDF<input className="sr-only" type="file" accept="application/pdf" onChange={(event) => void upload(event, "notice")} disabled={busy} /></label><label className="rounded-sm border border-rule px-4 py-2 font-bold">Upload timetable PDF<input className="sr-only" type="file" accept="application/pdf" onChange={(event) => void upload(event, "timetable")} disabled={busy} /></label></div>
+      {slots.length > 0 && <div className="mt-5 overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="border-b border-rule">{["Day", "Start", "End", "Subject", "Type", "Room", ""].map((cell) => <th key={cell} className="p-2">{cell}</th>)}</tr></thead><tbody>{slots.map((slot, index) => <tr key={index} className="border-b border-rule">{(["day", "startTime", "endTime", "subject", "type", "room"] as const).map((key) => <td key={key} className="p-2">{key === "day" || key === "type" ? <select value={slot[key]} onChange={(event) => setSlots(slots.map((row, i) => i === index ? { ...row, [key]: event.target.value } as Slot : row))} className="border border-rule bg-white p-1">{(key === "day" ? days : ["Lecture", "Lab", "Tutorial"]).map((value) => <option key={value}>{value}</option>)}</select> : <input value={slot[key]} type={key.includes("Time") ? "time" : "text"} onChange={(event) => setSlots(slots.map((row, i) => i === index ? { ...row, [key]: event.target.value } : row))} className="w-full border border-rule bg-white p-1" />}</td>)}<td><button type="button" onClick={() => setSlots(slots.filter((_, i) => i !== index))} className="text-xs text-muted">Remove</button></td></tr>)}</tbody></table><div className="mt-3 flex gap-3"><button type="button" onClick={() => setSlots([...slots, { ...blank }])} className="text-sm font-bold text-accent">Add row</button><button type="button" onClick={saveSlots} disabled={busy} className="rounded-sm bg-accent px-4 py-2 text-sm font-bold text-white">Save timetable</button></div></div>}</div>
+  </section>;
+}

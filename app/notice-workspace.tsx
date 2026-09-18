@@ -41,7 +41,7 @@ async function readResponse(response: Response) {
   return body;
 }
 
-export default function NoticeWorkspace() {
+export default function NoticeWorkspace({ revision, onChange }: { revision: number; onChange: () => void }) {
   const [text, setText] = useState("");
   const [events, setEvents] = useState<AcademicEvent[]>([]);
   const [result, setResult] = useState<IngestionResult | null>(null);
@@ -73,7 +73,7 @@ export default function NoticeWorkspace() {
     const controller = new AbortController();
     void loadEvents(controller.signal);
     return () => controller.abort();
-  }, [loadEvents]);
+  }, [loadEvents, revision]);
 
   async function submitNotice(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -105,6 +105,7 @@ export default function NoticeWorkspace() {
       }
       // Keep ignored text available for clarification; preserve all text on failure.
       if (next.action !== "IGNORE") setText("");
+      if (next.action !== "IGNORE") onChange();
     } catch (cause) {
       setError(controller.signal.aborted
         ? "The result could not be confirmed in time. Refresh your events before retrying."

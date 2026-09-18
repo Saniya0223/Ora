@@ -10,17 +10,47 @@ Parameters:
     AllowedPattern: '^https?://[^/]+$'
   BedrockModelId:
     Type: String
-    Default: ''
-    Description: Claude Sonnet model or inference profile ID. Empty leaves ingestion unconfigured.
+    Default: apac.amazon.nova-pro-v1:0
+    Description: APAC inference profile for the Amazon Nova Pro model amazon.nova-pro-v1:0.
   BedrockInvokeArns:
     Type: String
     Default: ''
-    Description: Comma-separated exact model ARNs (and inference profile ARN when used) permitted for invocation.
+    Description: Comma-separated Bedrock inference profile and foundation model ARNs permitted for invocation.
+  AIProvider:
+    Type: String
+    Default: bedrock
+    AllowedValues: [bedrock]
+    Description: Cloud AI provider. Ollama is intentionally restricted to local execution.
+  DailyStudyHours:
+    Type: Number
+    Default: 4
+    MinValue: 0.25
+    MaxValue: 14
+  GoogleClientId:
+    Type: String
+    Default: ''
+  GoogleClientSecret:
+    Type: String
+    Default: ''
+    NoEcho: true
+  GoogleRedirectUri:
+    Type: String
+    Default: ''
+  OAuthStateSecret:
+    Type: String
+    Default: ''
+    NoEcho: true
 
 Conditions:
   BedrockConfigured: !And
+    - !Equals [!Ref AIProvider, bedrock]
     - !Not [!Equals [!Ref BedrockModelId, '']]
     - !Not [!Equals [!Ref BedrockInvokeArns, '']]
+  GoogleConfigured: !And
+    - !Not [!Equals [!Ref GoogleClientId, '']]
+    - !Not [!Equals [!Ref GoogleClientSecret, '']]
+    - !Not [!Equals [!Ref GoogleRedirectUri, '']]
+    - !Not [!Equals [!Ref OAuthStateSecret, '']]
 
 Globals:
   Function:
@@ -36,7 +66,7 @@ Resources:
       StageName: $default
       CorsConfiguration:
         AllowOrigins: [!Ref FrontendOrigin]
-        AllowMethods: [GET, POST]
+        AllowMethods: [GET, POST, PUT]
         AllowHeaders: [Content-Type]
         MaxAge: 300
 
@@ -66,6 +96,10 @@ Resources:
         Variables:
           ACADEMIC_EVENTS_TABLE: !Ref AcademicEvents
           STUDENT_PROFILE_TABLE: !Ref StudentProfile
+          UPLOAD_BUCKET: !Ref UploadBucket
+          AI_PROVIDER: !Ref AIProvider
+          OLLAMA_BASE_URL: ''
+          OLLAMA_MODEL: qwen3:8b
           BEDROCK_MODEL_ID: !If [BedrockConfigured, !Ref BedrockModelId, '']
       Policies:
         - Statement:
@@ -79,6 +113,12 @@ Resources:
             - Effect: Allow
               Action: dynamodb:GetItem
               Resource: !GetAtt StudentProfile.Arn
+            - Effect: Allow
+              Action: [s3:GetObject, s3:PutObject, s3:HeadObject]
+              Resource: !Sub '${UploadBucket.Arn}/demo-user/*'
+            - Effect: Allow
+              Action: [textract:StartDocumentTextDetection, textract:GetDocumentTextDetection]
+              Resource: '*'
             - !If
               - BedrockConfigured
               - Effect: Allow
@@ -99,6 +139,236 @@ Resources:
             ApiId: !Ref CampusFlowApi
             Path: /events
             Method: GET
+
+  TimelineAndConflictEngine:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: backend/
+      Handler: handlers/timeline.handler
+      Timeout: 28
+      MemorySize: 256
+      Environment:
+        Variables:
+          ACADEMIC_EVENTS_TABLE: !Ref AcademicEvents
+          STUDENT_PROFILE_TABLE: !Ref StudentProfile
+          SCHEDULE_BLOCKS_TABLE: !Ref ScheduleBlocks
+          DAILY_STUDY_HOURS: !Ref DailyStudyHours
+          AI_PROVIDER: !Ref AIProvider
+          OLLAMA_BASE_URL: ''
+          OLLAMA_MODEL: qwen3:8b
+          BEDROCK_MODEL_ID: !If [BedrockConfigured, !Ref BedrockModelId, '']
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:Query, dynamodb:UpdateItem]
+              Resource: !GetAtt AcademicEvents.Arn
+            - Effect: Allow
+              Action: dynamodb:GetItem
+              Resource: !GetAtt StudentProfile.Arn
+            - Effect: Allow
+              Action: [dynamodb:Query, dynamodb:BatchWriteItem]
+              Resource: !GetAtt ScheduleBlocks.Arn
+            - !If
+              - BedrockConfigured
+              - Effect: Allow
+                Action: bedrock:InvokeModel
+                Resource: !Split [',', !Ref BedrockInvokeArns]
+              - !Ref AWS::NoValue
+      Events:
+        Timeline:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CampusFlowApi
+            Path: /timeline
+            Method: GET
+            TimeoutInMillis: 29000
+
+  ProfileFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: backend/
+      Handler: handlers/profile.handler
+      Environment:
+        Variables:
+          STUDENT_PROFILE_TABLE: !Ref StudentProfile
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref StudentProfile
+      Events:
+        ProfileGet:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CampusFlowApi
+            Path: /profile
+            Method: GET
+        ProfilePut:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CampusFlowApi
+            Path: /profile
+            Method: PUT
+
+  DocumentFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: backend/
+      Handler: handlers/documents.handler
+      Timeout: 28
+      MemorySize: 256
+      Environment:
+        Variables:
+          UPLOAD_BUCKET: !Ref UploadBucket
+          STUDENT_PROFILE_TABLE: !Ref StudentProfile
+          ACADEMIC_EVENTS_TABLE: !Ref AcademicEvents
+          AI_PROVIDER: !Ref AIProvider
+          OLLAMA_BASE_URL: ''
+          OLLAMA_MODEL: qwen3:8b
+          BEDROCK_MODEL_ID: !If [BedrockConfigured, !Ref BedrockModelId, '']
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [s3:GetObject, s3:PutObject, s3:HeadObject]
+              Resource: !Sub '${UploadBucket.Arn}/demo-user/*'
+            - Effect: Allow
+              Action: [textract:StartDocumentAnalysis, textract:GetDocumentAnalysis, textract:StartDocumentTextDetection, textract:GetDocumentTextDetection]
+              Resource: '*'
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:UpdateItem]
+              Resource: !GetAtt StudentProfile.Arn
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:UpdateItem, dynamodb:Query]
+              Resource: !GetAtt AcademicEvents.Arn
+            - !If
+              - BedrockConfigured
+              - Effect: Allow
+                Action: bedrock:InvokeModel
+                Resource: !Split [',', !Ref BedrockInvokeArns]
+              - !Ref AWS::NoValue
+      Events:
+        Upload:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CampusFlowApi
+            Path: /uploads
+            Method: POST
+        TimetableStart:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CampusFlowApi
+            Path: /timetable
+            Method: POST
+        TimetableSave:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CampusFlowApi
+            Path: /timetable
+            Method: PUT
+        TimetableGet:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CampusFlowApi
+            Path: /timetable
+            Method: GET
+        DocumentStatus:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CampusFlowApi
+            Path: /documents/{jobId}
+            Method: GET
+
+  ClassroomFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: backend/
+      Handler: handlers/classroom.handler
+      Timeout: 28
+      MemorySize: 256
+      Environment:
+        Variables:
+          STUDENT_PROFILE_TABLE: !Ref StudentProfile
+          GOOGLE_CLIENT_ID: !Ref GoogleClientId
+          GOOGLE_CLIENT_SECRET: !Ref GoogleClientSecret
+          GOOGLE_REDIRECT_URI: !Ref GoogleRedirectUri
+          OAUTH_STATE_SECRET: !Ref OAuthStateSecret
+          FRONTEND_URL: !Ref FrontendOrigin
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref StudentProfile
+      Events:
+        Classroom:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CampusFlowApi
+            Path: /classroom/{proxy+}
+            Method: ANY
+
+  ClassroomSyncEngine:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: backend/
+      Handler: handlers/classroom.schedulerHandler
+      Timeout: 120
+      MemorySize: 256
+      Environment:
+        Variables:
+          STUDENT_PROFILE_TABLE: !Ref StudentProfile
+          ACADEMIC_EVENTS_TABLE: !Ref AcademicEvents
+          CLASSROOM_SYNC_STATE_TABLE: !Ref ClassroomSyncState
+          AI_PROVIDER: !Ref AIProvider
+          OLLAMA_BASE_URL: ''
+          OLLAMA_MODEL: qwen3:8b
+          BEDROCK_MODEL_ID: !If [BedrockConfigured, !Ref BedrockModelId, '']
+          GOOGLE_CLIENT_ID: !Ref GoogleClientId
+          GOOGLE_CLIENT_SECRET: !Ref GoogleClientSecret
+          GOOGLE_REDIRECT_URI: !Ref GoogleRedirectUri
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:UpdateItem]
+              Resource: !GetAtt StudentProfile.Arn
+            - Effect: Allow
+              Action: [dynamodb:Query, dynamodb:GetItem, dynamodb:PutItem, dynamodb:UpdateItem]
+              Resource: !GetAtt AcademicEvents.Arn
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:PutItem]
+              Resource: !GetAtt ClassroomSyncState.Arn
+            - !If
+              - BedrockConfigured
+              - Effect: Allow
+                Action: bedrock:InvokeModel
+                Resource: !Split [',', !Ref BedrockInvokeArns]
+              - !Ref AWS::NoValue
+
+  ClassroomSchedulerRole:
+    Type: AWS::IAM::Role
+    Condition: GoogleConfigured
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: scheduler.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: invoke-classroom-sync
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !GetAtt ClassroomSyncEngine.Arn
+
+  ClassroomScheduler:
+    Type: AWS::Scheduler::Schedule
+    Condition: GoogleConfigured
+    Properties:
+      Name: campusflow-classroom-poll
+      ScheduleExpression: rate(15 minutes)
+      FlexibleTimeWindow: { Mode: 'OFF' }
+      Target:
+        Arn: !GetAtt ClassroomSyncEngine.Arn
+        RoleArn: !GetAtt ClassroomSchedulerRole.Arn
+        Input: '{}'
 
   StudentProfile:
     Type: AWS::DynamoDB::Table
@@ -185,6 +455,12 @@ Resources:
       OwnershipControls:
         Rules:
           - ObjectOwnership: BucketOwnerEnforced
+      CorsConfiguration:
+        CorsRules:
+          - AllowedOrigins: [!Ref FrontendOrigin]
+            AllowedMethods: [POST]
+            AllowedHeaders: ['*']
+            MaxAge: 300
 
 Outputs:
   ApiBaseUrl:

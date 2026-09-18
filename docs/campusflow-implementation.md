@@ -343,3 +343,27 @@ Lambda uses Node.js 22 instead of the deprecated Node.js 20 runtime, as proposed
 in preparation and accepted when Phase 1 was authorized. The schemas and all
 three Bedrock prompt contracts above are unchanged. See phase-1-decisions.md
 for implementation conventions and unresolved later-phase questions.
+
+## 15. Approved Bedrock model amendment
+
+CampusFlow uses Amazon Nova Pro (`amazon.nova-pro-v1:0`) instead of the previous
+Bedrock partner model because the AWS account cannot authorize third-party
+models. In
+`ap-south-1`, invocation uses the required APAC system inference profile ID
+`apac.amazon.nova-pro-v1:0`. The three prompt texts, JSON contracts, validation,
+truth-resolution logic, deterministic scheduling, and architecture are unchanged.
+
+## 16. Approved interchangeable AI-provider amendment
+
+AI model transport is selected with `AI_PROVIDER` and does not change the three
+prompt definitions or their JSON contracts:
+
+- `ollama` uses the local Ollama chat API with `OLLAMA_BASE_URL` and
+  `OLLAMA_MODEL` (`qwen3:8b` by default). It is local/demo only.
+- `bedrock` uses the existing Converse API with configurable
+  `BEDROCK_MODEL_ID`.
+
+AWS Lambda must never attempt to connect to Ollama on a developer laptop. The
+truth-resolution logic, deterministic planner math, schemas, API paths,
+Classroom flow, PDF/Textract flow, DynamoDB tables, and frontend remain
+unchanged.

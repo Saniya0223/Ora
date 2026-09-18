@@ -1,0 +1,10 @@
+[
+  {
+    "role": "user",
+    "content": [
+      {
+        "text": "Reply with exactly: CAMPUSFLOW_BEDROCK_OK"
+      }
+    ]
+  }
+]

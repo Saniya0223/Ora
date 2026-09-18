@@ -73,14 +73,28 @@ preparation plan, including the recommended Node.js 22 runtime.
 ## External prerequisites
 
 - Authenticate the AWS CLI, select a region, and verify deployment permissions.
-- Select an available Claude Sonnet model or inference profile, complete any
-  required Anthropic account setup, and verify invocation access.
+- Verify Amazon Nova Pro invocation access through the APAC inference profile.
+  The AWS account must be eligible for Bedrock Runtime before deployment.
 - Configure Google Cloud and test accounts before Phase 5.
 - Docker is installed but its engine was not reachable in this session. It is
   needed for SAM local execution or container builds, not ordinary Node tests.
 - Tables and the upload bucket have Retain policies. A future stack deletion
   will preserve them. Exact physical table names mean one such stack per AWS
   account/region unless a future naming change is agreed.
+
+## Later implementation decisions
+
+- The schedule uses a four-hour daily study capacity by default. The SAM
+  `DailyStudyHours` parameter can change it; capacity shortfalls are returned as
+  unallocated work rather than silently overbooking a day.
+- PDF imports use asynchronous Textract jobs. Timetable slots are previewed and
+  edited in the browser before they are persisted.
+- Classroom sync paginates all selected-course announcements and coursework,
+  calls the shared ingestion core for every changed item, and only advances a
+  checkpoint after processing the course.
+- The scheduler is conditional on all OAuth parameters being configured. Google
+  must redirect to the deployed backend `/classroom/callback` URL so Lambda can
+  exchange the authorization code. See [manual-setup.md](manual-setup.md).
 
 ## References checked during preparation
 

@@ -1,89 +1,94 @@
 # CampusFlow
 
-A single, current academic action plan from notices, PDFs, and Google Classroom.
+CampusFlow consolidates academic notices and a weekly timetable into a current,
+prioritized plan for the fixed hackathon user, `demo-user`.
 
-**Implemented: Phase 1 foundation only.** The Next.js app shell, four DynamoDB
-table definitions, private S3 bucket definition, Lambda health endpoint, and
-strict data/Bedrock contracts are ready for verification. Ingestion, scheduling,
-OCR, Classroom, and cloud deployment belong to later phases.
+The source specification is [docs/campusflow-implementation.md](docs/campusflow-implementation.md).
+It defines the schemas, AI contracts, UI direction, and project scope.
 
-The [implementation guide](docs/campusflow-implementation.md) is the source of
-truth. [Phase 1 decisions](docs/phase-1-decisions.md) record the approved runtime
-update, data conventions, prerequisites, and unresolved contract questions.
+## Current implementation
 
-## Run locally
+- Next.js dashboard with manual notice entry, current events, daily plan,
+  profile setup, and PDF/timetable review UI.
+- Strict DynamoDB and provider-neutral AI JSON validation using the exact schema field names
+  and prompt files from the implementation guide.
+- Manual notice ingestion with deterministic replay protection, update/cancel
+  history, and guarded AI truth resolution.
+- Deterministic timeline priority scoring, 48-hour collision detection,
+  timetable expansion, daily allocation, and validated AI narration.
+- Private PDF upload preparation, asynchronous Textract text/table processing,
+  and editable timetable confirmation before persistence.
+- SAM infrastructure for the API, DynamoDB tables, private S3 bucket, Lambda
+  handlers, and the required permissions for the implemented local features.
 
-Use Node.js 22 (22.16 or newer) and npm. From the repository root:
+Google Classroom uses the same truth-resolution path as other sources. Its
+external OAuth configuration and live service verification are documented
+separately; no AWS resources have been deployed.
+
+## Local checks
+
+Use Node.js 22.16 or later, then run:
 
 ```powershell
 npm.cmd ci
-npm.cmd run dev
-```
-
-Open http://localhost:3000. On shells without PowerShell's script-execution
-restriction, `npm` works in place of `npm.cmd`. No cloud credentials or `.env`
-file are needed to view the app shell.
-
-## Verify
-
-```powershell
 npm.cmd test
 npm.cmd run typecheck
 npm.cmd run build
 sam validate --lint --template-file template.yaml --region us-east-1
-sam build --template-file template.yaml
 ```
 
-The region above is only a local validation argument; it does not select a
-deployment region or create AWS resources. Tests use Node's built-in test runner
-and never call paid services. SAM build packages the Node Lambda without Docker.
+The normal test suite uses mocks and does not invoke AWS, Textract, an AI
+provider, or Google. An opt-in Ollama live check is documented below.
 
-Once Docker is running, the packaged health endpoint can also be invoked with:
+## Local Ollama AI
+
+Download and run the official [Ollama Windows installer](https://ollama.com/download/windows),
+reopen PowerShell, then download the local model:
 
 ```powershell
-npm.cmd run sam:local
-Invoke-RestMethod http://localhost:3001/health
+ollama --version
+ollama pull qwen3:8b
+ollama run qwen3:8b "Reply with exactly: CAMPUSFLOW_OLLAMA_OK"
 ```
 
-Expected response: `{"status":"ok","service":"campusflow"}`. This endpoint
-does not verify external service availability.
+Run CampusFlow's real prompt/contract checks against that model:
 
-Phase 1 verification completed on 2026-09-17: all 15 Node tests, TypeScript
-checking, the production Next.js build, SAM lint validation and native packaging,
-direct invocation of the packaged health handler, and HTTP checks of the
-production homepage and compiled stylesheet passed. The corrected lockfile
-includes Linux SWC dependencies for Amplify and package integrity hashes; npm
-audit reported zero known vulnerabilities. A headless screenshot attempt was
-blocked by local browser/GPU restrictions. Docker-based invocation and live AWS
-or Google integration were not verified.
+```powershell
+$env:AI_PROVIDER="ollama"
+$env:OLLAMA_BASE_URL="http://localhost:11434"
+$env:OLLAMA_MODEL="qwen3:8b"
+npm.cmd run test:ollama --workspace @campusflow/backend
+```
 
-## Structure
+For the complete local API, SAM runs Lambda code in Docker, so use the supplied
+environment file whose Ollama URL is `http://host.docker.internal:11434`:
+
+```powershell
+sam build --template-file template.yaml
+sam local start-api --region ap-south-1 --port 3001 --env-vars sam.local.ollama.example.json
+```
+
+In another PowerShell window:
+
+```powershell
+$env:NEXT_PUBLIC_API_BASE_URL="http://localhost:3001"
+npm.cmd run dev
+```
+
+## Manual configuration and deployment
+
+Follow [docs/manual-setup.md](docs/manual-setup.md) for AWS, Bedrock, Amplify,
+and Google Classroom setup, including the required backend OAuth callback URL.
+No cloud resources are created by local tests or builds.
+
+## Project layout
 
 ```text
-app/                         Next.js App Router and Tailwind app shell
-backend/handlers/health.js   API Gateway/Lambda health handler
-backend/lib/contracts.js     DynamoDB item and Bedrock response validation
-backend/prompts/             Three unchanged prompt templates from the guide
-backend/tests/               Contract and health checks
-docs/                        Specification and implementation decisions
-template.yaml                SAM API, Lambda, four tables, and private S3 bucket
+app/                         Next.js application
+backend/handlers/            Lambda handlers
+backend/lib/                 validation, ingestion, scheduling, document logic
+backend/prompts/             exact shared AI prompt contracts
+backend/tests/               Node test suite
+docs/                        source implementation guide and decisions
+template.yaml                SAM infrastructure
 ```
-
-## Configuration and secrets
-
-- `.env.example` contains only the future public API URL. For later frontend
-  wiring, copy it to `.env.local` and use the deployed API URL or SAM local URL.
-- `backend/.env.example` documents future backend values; it is not automatically
-  loaded by Lambda or SAM. SAM environment variables and a gitignored
-  `backend/env.local.json` will be wired when the handlers need them.
-- Authenticate locally with an AWS profile; use Lambda execution roles in AWS.
-  Never put AWS access keys in source files or frontend environment variables.
-- Enter Google OAuth secrets only in backend configuration. Never use
-  `NEXT_PUBLIC_*` for secrets. Classroom tokens stay in the specified encrypted
-  DynamoDB profile item, never browser responses or logs.
-- The health function has no DynamoDB, S3, Bedrock, Textract, or Google access.
-  Add narrow IAM permissions alongside the relevant handlers in later phases.
-- No resources have been deployed. AWS access, region/model selection, Google
-  setup, and the Amplify repository connection remain external prerequisites.
-
-Next: Phase 2 implements manual text ingestion and truth resolution.

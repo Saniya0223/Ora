@@ -1,0 +1,9 @@
+version = 0.1
+
+[default.deploy.parameters]
+stack_name = "campusflow"
+resolve_s3 = true
+capabilities = "CAPABILITY_IAM"
+confirm_changeset = true
+fail_on_empty_changeset = false
+parameter_overrides = "FrontendOrigin=\"https://your-branch.example.amplifyapp.com\" AIProvider=\"bedrock\" BedrockModelId=\"apac.amazon.nova-pro-v1:0\" DailyStudyHours=4"

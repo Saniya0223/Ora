@@ -5,6 +5,7 @@ import {
   academicEventSchema,
   classroomSyncStateSchema,
   conflictNarrativeSchema,
+  parseAIResponse,
   parseBedrockResponse,
   scheduleBlocksSchema,
   studentProfileSchema,
@@ -118,12 +119,13 @@ test("sync checkpoints require an unambiguous absolute timestamp", () => {
   assert.equal(classroomSyncStateSchema.safeParse({ ...checkpoint, lastSyncedAt: "2026-09-16T10:30" }).success, false);
 });
 
-test("model parsing rejects fenced or invalid JSON without leaking the source text", () => {
+test("model parsing extracts fenced JSON and rejects malformed values without leaking source text", () => {
   const privateText = "PRIVATE_NOTICE_CONTENT";
-  for (const text of [privateText, "```json\n" + JSON.stringify(truth) + "\n```", JSON.stringify({ ...truth, privateText })]) {
-    assert.throws(() => parseBedrockResponse(text, truthResolutionSchema), (error) => {
+  assert.deepEqual(parseAIResponse("```json\n" + JSON.stringify(truth) + "\n```", truthResolutionSchema), truth);
+  for (const text of [privateText, JSON.stringify({ ...truth, privateText })]) {
+    assert.throws(() => parseAIResponse(text, truthResolutionSchema), (error) => {
       assert.equal(error.message.includes(privateText), false);
-      return /Bedrock response/.test(error.message);
+      return /AI response/.test(error.message);
     });
   }
 });

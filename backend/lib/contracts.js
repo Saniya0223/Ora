@@ -111,18 +111,51 @@ export const timetableNormalizationSchema = z.strictObject({
   lowConfidenceRows: z.array(z.string()),
 });
 
-// Reject malformed responses, extra fields, and markdown fences. Never include
-// the raw model response in an error: source documents may contain private data.
-export function parseBedrockResponse(text, schema) {
-  let value;
-  try {
-    value = JSON.parse(text);
-  } catch {
-    throw new Error("Bedrock response is not valid JSON");
+// Accept a JSON value directly or extract the first balanced JSON object/array
+// from harmless model framing such as Markdown fences. Never include raw model
+// output in an error because source documents may contain private data.
+function extractJSON(text) {
+  if (typeof text !== "string" || !text.trim() || text.length > 250_000) {
+    throw new Error("AI response is not valid JSON");
   }
+  const trimmed = text.trim();
+  try { return JSON.parse(trimmed); } catch { /* Try balanced extraction below. */ }
+  for (let start = 0; start < trimmed.length; start++) {
+    if (trimmed[start] !== "{" && trimmed[start] !== "[") continue;
+    const stack = [];
+    let quoted = false;
+    let escaped = false;
+    for (let index = start; index < trimmed.length; index++) {
+      const character = trimmed[index];
+      if (quoted) {
+        if (escaped) escaped = false;
+        else if (character === "\\") escaped = true;
+        else if (character === '"') quoted = false;
+        continue;
+      }
+      if (character === '"') { quoted = true; continue; }
+      if (character === "{" || character === "[") stack.push(character);
+      else if (character === "}" || character === "]") {
+        const opening = stack.pop();
+        if ((opening === "{" && character !== "}") || (opening === "[" && character !== "]")) break;
+        if (!stack.length) {
+          try { return JSON.parse(trimmed.slice(start, index + 1)); } catch { break; }
+        }
+      }
+    }
+  }
+  throw new Error("AI response is not valid JSON");
+}
+
+export function parseAIResponse(text, schema) {
+  const value = extractJSON(text);
   const result = schema.safeParse(value);
   if (!result.success) {
-    throw new Error("Bedrock response does not match the expected contract");
+    throw new Error("AI response does not match the expected contract");
   }
   return result.data;
 }
+
+// Kept as a compatibility export for any external test or script importing the
+// old helper name. Application code uses the provider-neutral name.
+export const parseBedrockResponse = parseAIResponse;

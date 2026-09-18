@@ -1,4 +1,4 @@
-import NoticeWorkspace from "./notice-workspace";
+import Workspace from "./workspace";
 
 export default function Home() {
   return (
@@ -22,7 +22,7 @@ export default function Home() {
           Your deadlines, class times, and next steps. One current plan.
         </p>
 
-        <NoticeWorkspace />
+        <Workspace />
       </main>
 
       <footer className="mx-auto mt-8 max-w-6xl px-6 pb-8 sm:px-10">
