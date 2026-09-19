@@ -4,6 +4,7 @@ import type { Sources, ClassroomSyncStatus } from "../lib/types";
 import { useResource, invalidate } from "../lib/data";
 import { request, errorMessage } from "../lib/api";
 import { deadline, syncLabel } from "../lib/presentation";
+import { safeSourceLink, syncExplanation } from "../lib/source-presentation";
 import { useStudent } from "./shell";
 import { ErrorBox, Icon, Modal, Skeleton } from "./ui";
 export function ConnectedSources({ onTimetable }: { onTimetable: () => void }) {
@@ -40,7 +41,7 @@ export function ConnectedSources({ onTimetable }: { onTimetable: () => void }) {
       );
       const s = r.sync.lastResult;
       setMessage(
-        `${r.sync.status === "PARTIAL" ? "Partial sync — run Sync again to continue." : "Sync finished."}${s ? ` ${s.created} created, ${s.updated} updated, ${s.cancelled} cancelled, ${s.ignored} ignored, ${s.failed} failed.${s.truncated ? " More items remain for the next run." : ""}` : ""}`,
+        `${syncExplanation(s)}${s ? ` ${s.created} created, ${s.updated} updated, ${s.cancelled} cancelled, ${s.ignored} ignored.` : ""}`,
       );
     } catch (e) {
       setError(errorMessage(e));
@@ -95,9 +96,13 @@ export function ConnectedSources({ onTimetable }: { onTimetable: () => void }) {
             </small>
             {source.sync.status === "PARTIAL" && (
               <small className="accent-text">
-                Some items remain. Sync again to continue.
+                {syncExplanation(source.sync.lastResult)}
               </small>
             )}
+            {source.sync.lastResult?.reviewItems?.map((item) => {
+              const url = safeSourceLink(item.sourceUrl, true);
+              return <small key={item.sourceRef}>{source.selectedCourses.find((course) => course.id === item.courseId)?.name ?? "Classroom item"}: {item.code.replaceAll("_", " ").toLowerCase()}{url && <> · <a href={url} target="_blank" rel="noopener noreferrer">Review original ↗</a></>}</small>;
+            })}
             {source.sync.lastErrorCode && (
               <small className="accent-text">
                 {source.sync.lastErrorCode.replaceAll("_", " ").toLowerCase()}

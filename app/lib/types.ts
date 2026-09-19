@@ -208,6 +208,22 @@ export type TaskListItem = {
 
 // Returned by single-task routes.
 export type TaskDetail = TaskListItem & {
+  sourceUrl?: string | null;
+  latestChange?: { at: string; sourceRef: string | null; fields: { field: string; before: string | null; after: string | null }[] } | null;
+  details?: {
+    actionSummary: string | null;
+    instructions: string[];
+    requirements: string[];
+    topics: string[];
+    submissionMethod: string | null;
+    links: { label: string | null; url: string }[];
+    venue: string | null;
+    certainty: "confirmed" | "tentative";
+    tentativeDeadline: string | null;
+    deadlineText: string | null;
+    postedAt: string | null;
+    updatedAt: string | null;
+  } | null;
   studentEstimatedMinutes: number | null;
   sourceEstimatedMinutes: number | null;
   aiEstimate: {
@@ -351,6 +367,12 @@ export type SyncResult = {
   ignored: number;
   failed: number;
   truncated: boolean; // stopped at the time budget; the rest resumes next run
+  temporaryFailed?: number;
+  validationFailed?: number;
+  raceSkipped?: number;
+  needsReview?: number;
+  rateLimited?: boolean;
+  reviewItems?: { courseId: string; sourceRef: string; code: string; sourceUrl: string | null }[];
 };
 
 export type ClassroomSyncStatus = {

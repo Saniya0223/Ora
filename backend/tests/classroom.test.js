@@ -177,11 +177,12 @@ test("one failing Classroom item is isolated, holds the checkpoint, and replays 
   assert.equal(first.processed, 2, "the two healthy items still ingest");
   assert.equal(first.failed, 1, "the poison item is counted, not thrown");
   assert.equal(events.size, 2);
-  assert.equal(checkpoints.get("course-1"), undefined, "a failed item must not advance the watermark");
+  assert.equal(checkpoints.get("course-1").lastSyncedAt, "1970-01-01T00:00:00.000Z", "a failed item must not advance the watermark");
 
   // The 15-minute scheduler replays the same items: ingestion is idempotent.
   const second = await run();
-  assert.equal(second.processed, 2);
+  assert.equal(second.processed, 0, "successful receipts skip repeat extraction");
+  assert.equal(second.ignoredReasons.alreadyProcessed, 2);
   assert.equal(second.failed, 1);
   assert.equal(events.size, 2, "a replayed sync must not duplicate events");
 });

@@ -70,8 +70,10 @@ export async function runClassroomSync(dependencies, { trigger = "scheduled", bu
       ...syncing,
       // PARTIAL: the source was reachable, but some items failed or the time
       // budget ran out. Those items keep their watermark and retry next run.
-      status: counts.failed > 0 || counts.truncated ? "PARTIAL" : "SUCCESS",
-      lastFinishedAt: at, lastSuccessfulSyncAt: at, lastResult: counts,
+      status: counts.failed > 0 || counts.truncated || counts.needsReview > 0 ? "PARTIAL" : "SUCCESS",
+      lastFinishedAt: at,
+      lastSuccessfulSyncAt: counts.failed > 0 || counts.truncated || counts.needsReview > 0 ? syncing.lastSuccessfulSyncAt : at,
+      lastResult: counts,
     };
     await writeStatus(db, tableName, finished, { account: account ? { ...account, fetchedAt: at } : undefined, releaseLease: true });
   } catch (error) {

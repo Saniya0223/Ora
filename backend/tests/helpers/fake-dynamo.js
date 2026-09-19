@@ -3,6 +3,8 @@
 // conditions, projections) so a wrong expression fails the test instead of
 // passing silently. It supports only the grammar this codebase uses.
 
+import { isDeepStrictEqual } from "node:util";
+
 class AwsError extends Error {
   constructor(name, message = name) { super(message); this.name = name; }
 }
@@ -76,7 +78,7 @@ function evaluator(names = {}, values = {}) {
       return [left !== undefined && left >= low && left <= high, afterHigh];
     }
     const [right, next] = valueOf(item, tokens, afterLeft + 1);
-    const result = { "=": left === right, "<>": left !== right, "<": left < right, "<=": left <= right, ">": left > right, ">=": left >= right }[op];
+    const result = { "=": isDeepStrictEqual(left, right), "<>": !isDeepStrictEqual(left, right), "<": left < right, "<=": left <= right, ">": left > right, ">=": left >= right }[op];
     if (result === undefined) throw new Error(`Unsupported operator ${op}`);
     return [left !== undefined && right !== undefined ? result : op === "<>", next];
   }

@@ -7,6 +7,7 @@ import { PRIORITY_RANK, calculatePriority } from "./priority.js";
 import { USER_ID, getItem, putNew, queryUser, updateVersioned } from "./store.js";
 import { deadlineInstant } from "./time.js";
 import { localParts, zonedInstant } from "./zone.js";
+import { classroomSourceUrl } from "./source-truth.js";
 
 const taskKey = (taskId) => ({ userId: USER_ID, taskId });
 const parseTask = (row) => taskRecordSchema.parse(row);
@@ -86,6 +87,8 @@ export function toTaskDTO(task, { now, dailyStudyMinutes }, { detail = false } =
     sourceEstimatedMinutes: task.sourceEstimatedMinutes,
     aiEstimate: task.aiEstimate,
     details: task.details,
+    sourceUrl: task.source === "CLASSROOM" ? classroomSourceUrl(task.sourceUrl) : null,
+    latestChange: task.latestChange,
     notes: task.notes,
     checklist: task.checklist,
     attachments: task.attachments.map(publicAttachment),
@@ -122,6 +125,8 @@ function sourceFields(event, courseName) {
     type: EVENT_TYPE_TO_TASK_TYPE[event.type] ?? "OTHER",
     deadline: event.currentDeadline ? new Date(deadlineInstant(event.currentDeadline)).toISOString() : null,
     details: sourceDetails(event),
+    sourceUrl: event.sourceType === "classroom" ? classroomSourceUrl(event.sourceUrl) : null,
+    latestChange: event.latestChange ?? null,
     // The truth prompt answers 0 when it does not know the effort, so 0 from a
     // source is treated as unknown rather than as "no work required".
     sourceEstimatedMinutes: event.estimatedHours > 0 ? Math.min(10_000, Math.max(1, Math.round(event.estimatedHours * 60))) : null,
@@ -131,6 +136,8 @@ function sourceFields(event, courseName) {
 
 const SOURCE_KEYS = ["academicEventId", "source", "sourceRef", "sourceStatus", "title", "type", "deadline", "sourceEstimatedMinutes"];
 const sameSource = (task, fields) => SOURCE_KEYS.every((key) => task[key] === fields[key])
+  && task.sourceUrl === fields.sourceUrl
+  && JSON.stringify(task.latestChange) === JSON.stringify(fields.latestChange)
   && JSON.stringify(task.details) === JSON.stringify(fields.details)
   && (fields.course === null || (task.course?.id === fields.course.id && (fields.course.name === null || task.course?.name === fields.course.name)));
 

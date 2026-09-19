@@ -1941,3 +1941,14 @@ body:has(.focus-dock) {
   font-size: 11px;
   color: var(--muted);
 }
+
+.source-task-details {
+  overflow-wrap: anywhere;
+  font-size: 14px;
+  line-height: 1.55;
+}
+.source-task-details:empty { display: none; }
+.source-task-details section { margin-block: 14px; }
+.source-task-details small { display: block; }
+.source-task-details p { margin-block: 6px 12px; white-space: pre-line; }
+.source-task-details ul { padding-left: 20px; margin-block: 6px 12px; }

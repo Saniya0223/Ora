@@ -64,6 +64,11 @@ export const syncResultSchema = z.strictObject({
   // Optional so sync results stored before these existed still parse.
   ignoredReasons: ignoredReasonsSchema.optional(),
   rateLimited: z.boolean().optional(),
+  temporaryFailed: count.optional(),
+  validationFailed: count.optional(),
+  raceSkipped: count.optional(),
+  needsReview: count.optional(),
+  reviewItems: z.array(z.object({ courseId: identifier, sourceRef: identifier, code: identifier, sourceUrl: z.string().nullable() })).optional(),
 });
 
 export const classroomSyncStatusSchema = z.strictObject({
@@ -143,6 +148,14 @@ export const eventSourceMetaSchema = z.strictObject({
   itemCount: z.number().int().positive(),
   postedAt: timestamp.nullable(),
   updatedAt: timestamp.nullable(),
+  itemKey: z.string().optional(),
+  versions: z.record(z.string(), z.strictObject({ revision: z.string(), updatedAt: timestamp.nullable() })).optional(),
+});
+
+export const latestChangeSchema = z.strictObject({
+  at: timestamp,
+  sourceRef: z.string().nullable(),
+  fields: z.array(z.strictObject({ field: z.enum(["currentDeadline", "venue", "status", "title", "instructions", "requirements", "topics", "links", "submissionMethod", "certainty"]), before: z.string().nullable(), after: z.string().nullable() })),
 });
 
 export const academicEventSchema = z.strictObject({
@@ -163,6 +176,8 @@ export const academicEventSchema = z.strictObject({
   // Optional: absent on events stored before structured details existed.
   details: eventDetailsSchema.optional(),
   sourceMeta: eventSourceMetaSchema.optional(),
+  sourceUrl: z.string().nullable().optional(),
+  latestChange: latestChangeSchema.nullable().optional(),
 });
 
 export const classroomSyncStateSchema = z.strictObject({
@@ -170,6 +185,8 @@ export const classroomSyncStateSchema = z.strictObject({
   courseId: identifier,
   lastSyncedAt: timestamp,
   courseName: z.string().nullable().optional(),
+  reviewItems: z.array(z.strictObject({ sourceRef: identifier, revision: z.string(), updatedAt: timestamp, code: identifier, sourceUrl: z.string().nullable() })).optional(),
+  processedItems: z.array(z.strictObject({ sourceRef: identifier, revision: z.string() })).optional(),
 });
 
 export const scheduleBlocksSchema = z.strictObject({

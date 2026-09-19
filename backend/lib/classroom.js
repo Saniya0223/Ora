@@ -3,7 +3,8 @@ import { classroom_v1 } from "googleapis/build/src/apis/classroom/v1.js";
 import { OAuth2Client } from "google-auth-library";
 import { GetCommand, PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { studentProfileSchema } from "./contracts.js";
-import { DEMO_USER_ID, ingestNotice } from "./ingestion.js";
+import { DEMO_USER_ID, ingestNotice, noticeRevision } from "./ingestion.js";
+import { classroomSourceUrl, syncFailureCategory } from "./source-truth.js";
 import { IngestionError } from "./errors.js";
 import { campusDateTime } from "./time.js";
 
@@ -109,6 +110,7 @@ export const emptySyncResult = () => ({
   coursesScanned: 0, announcementsScanned: 0, courseworkScanned: 0, processed: 0, created: 0, updated: 0, cancelled: 0, ignored: 0, failed: 0, truncated: false,
   ignoredReasons: { modelIgnored: 0, alreadyProcessed: 0, duplicate: 0, noChange: 0 },
   rateLimited: false,
+  temporaryFailed: 0, validationFailed: 0, raceSkipped: 0, needsReview: 0, reviewItems: [],
 });
 const ACTION_COUNTER = { CREATE: "created", UPDATE: "updated", CANCEL: "cancelled", IGNORE: "ignored" };
 
@@ -132,11 +134,14 @@ export async function syncClassroom({ db, ai, bedrock, env, Classroom = classroo
   const { client, profile: current } = await connectedClient({ db, env, OAuth2 });
   const api = new Classroom({ auth: client });
   const result = emptySyncResult();
+  const courseReviews = new Map();
   const outOfTime = () => Date.now() - startedAt > budgetMs;
   for (const courseId of current.connectedCourses) {
     if (outOfTime() || result.rateLimited) { result.truncated = true; break; }
     const sync = await db.send(new GetCommand({ TableName: env.CLASSROOM_SYNC_STATE_TABLE, Key: { userId: DEMO_USER_ID, courseId }, ConsistentRead: true }));
     const floor = sync.Item?.lastSyncedAt;
+    const reviews = new Map((sync.Item?.reviewItems ?? []).map((entry) => [entry.sourceRef, entry]));
+    const processed = new Map((sync.Item?.processedItems ?? []).map((entry) => [entry.sourceRef, entry]));
     const course = (await api.courses.get({ id: courseId })).data;
     const courseName = course.name ?? null;
     const [announcements, coursework] = await Promise.all([
@@ -159,19 +164,42 @@ export async function syncClassroom({ db, ai, bedrock, env, Classroom = classroo
     for (const { item, kind } of items) {
       if (outOfTime()) { courseTruncated = true; result.truncated = true; break; }
       const sourceRef = `${courseId}:${kind}:${item.id}`;
+      const notice = {
+        text: classroomText(course, item, kind), sourceType: "classroom", sourceRef,
+        postedAt: validTime(item.creationTime), updatedAt: validTime(item.updateTime),
+        sourceUrl: classroomSourceUrl(item.alternateLink),
+      };
+      const revision = noticeRevision(notice);
+      if (reviews.get(sourceRef)?.revision === revision || processed.get(sourceRef)?.revision === revision) {
+        result.ignored++; result.ignoredReasons.alreadyProcessed++; continue;
+      }
+      const recordFailure = (code) => {
+        const category = syncFailureCategory(code);
+        if (category === "needsReview" && (reviews.has(sourceRef) || reviews.size < 100)) {
+          reviews.set(sourceRef, { sourceRef, revision, updatedAt: notice.updatedAt ?? now().toISOString(), code, sourceUrl: notice.sourceUrl });
+          return;
+        }
+        result[category === "needsReview" ? "temporaryFailed" : category]++;
+        courseFailed = true;
+      };
       try {
-        const outcome = await ingestNotice({
-          text: classroomText(course, item, kind), sourceType: "classroom", sourceRef,
-          postedAt: validTime(item.creationTime), updatedAt: validTime(item.updateTime),
-        }, { db, ai, bedrock, env, tableName: env.ACADEMIC_EVENTS_TABLE, profileTableName: env.STUDENT_PROFILE_TABLE, modelId: env.BEDROCK_MODEL_ID, now, taskContext: { courseName } });
+        const outcome = await ingestNotice(notice, { db, ai, bedrock, env, tableName: env.ACADEMIC_EVENTS_TABLE, profileTableName: env.STUDENT_PROFILE_TABLE, modelId: env.BEDROCK_MODEL_ID, now, taskContext: { courseName } });
         result.processed++;
         count(result, outcome);
         // Some items of the post failed: keep the watermark so a replay, which
         // skips what already landed, fills the gap.
-        if (outcome.partial) { result.failed++; courseFailed = true; }
+        if (outcome.partial) {
+          result.failed++;
+          const failures = outcome.results.filter((entry) => entry.action === "FAILED");
+          const retryable = failures.find((entry) => syncFailureCategory(entry.code) !== "needsReview");
+          recordFailure((retryable ?? failures[0]).code);
+        } else {
+          reviews.delete(sourceRef);
+          processed.set(sourceRef, { sourceRef, revision });
+        }
       } catch (error) {
         result.failed++;
-        courseFailed = true;
+        recordFailure(error?.code ?? "UNKNOWN");
         // Never log notice text, model output, or credentials: codes only.
         console.error(JSON.stringify({ code: "CLASSROOM_ITEM_FAILED", courseId, kind, itemId: item.id, reason: error?.code ?? error?.name ?? "UNKNOWN" }));
         // Groq is still limiting after bounded retries: stop this run instead
@@ -186,9 +214,26 @@ export async function syncClassroom({ db, ai, bedrock, env, Classroom = classroo
     const newest = [...announcements, ...coursework].map((item) => item.updateTime).filter(Boolean).sort().at(-1);
     const advance = !courseFailed && !courseTruncated && newest && (!floor || Date.parse(newest) > Date.parse(floor));
     // The course name is kept beside the watermark so Tasks can show it.
-    if (advance || (floor && (sync.Item?.courseName ?? null) !== courseName)) {
-      await db.send(new PutCommand({ TableName: env.CLASSROOM_SYNC_STATE_TABLE, Item: { userId: DEMO_USER_ID, courseId, lastSyncedAt: advance ? newest : floor, courseName } }));
+    // Review holds a source revision, not the entire course watermark. An edit
+    // changes its revision and is tried again. Successful receipts avoid paying
+    // for repeated IGNORE extractions while another item remains retryable.
+    const reviewItems = [...reviews.values()];
+    courseReviews.set(courseId, reviewItems);
+    const processedItems = advance ? [] : [...processed.values()].slice(-500);
+    if (advance || reviewItems.length || processedItems.length || (floor && (sync.Item?.courseName ?? null) !== courseName)
+      || JSON.stringify(reviewItems) !== JSON.stringify(sync.Item?.reviewItems ?? [])) {
+      await db.send(new PutCommand({ TableName: env.CLASSROOM_SYNC_STATE_TABLE, Item: { userId: DEMO_USER_ID, courseId, lastSyncedAt: advance ? newest : floor ?? "1970-01-01T00:00:00.000Z", courseName, reviewItems, processedItems } }));
     }
+  }
+  // A truncated run must still expose reviews from courses it did not reach.
+  for (const courseId of current.connectedCourses) {
+    if (!courseReviews.has(courseId)) {
+      const state = await db.send(new GetCommand({ TableName: env.CLASSROOM_SYNC_STATE_TABLE, Key: { userId: DEMO_USER_ID, courseId }, ConsistentRead: true }));
+      courseReviews.set(courseId, state.Item?.reviewItems ?? []);
+    }
+    const reviews = courseReviews.get(courseId);
+    result.needsReview += reviews.length;
+    result.reviewItems.push(...reviews.map(({ sourceRef, code, sourceUrl }) => ({ courseId, sourceRef, code, sourceUrl })));
   }
   // Label the connected account once; a failure here never fails the sync.
   if (!current.classroomAccount) {
