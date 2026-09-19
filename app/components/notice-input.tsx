@@ -101,8 +101,8 @@ export function NoticeInput({
     }
   }
   return (
-    <section className="card">
-      <h2>Add Notice or Document</h2>
+    <section className="card quiet-card">
+      <h2>Add a Notice or PDF</h2>
       <div className="segmented">
         <button
           aria-pressed={tab === "text"}

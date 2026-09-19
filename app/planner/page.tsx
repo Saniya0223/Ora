@@ -4,12 +4,11 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { Planner } from "../lib/types";
 import { useResource, invalidate } from "../lib/data";
-import { downloadCalendar, request, errorMessage } from "../lib/api";
+import { request, errorMessage } from "../lib/api";
 import {
   addDays,
   clock,
   dateKey,
-  monday,
   daySegments,
   placeOverlaps,
   type CalendarItem,
@@ -21,7 +20,7 @@ import {
   Skeleton,
 } from "../components/ui";
 import { useStudent } from "../components/shell";
-import { ChevronLeft, ChevronRight, Download, RefreshCw, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, RefreshCw, X } from "lucide-react";
 
 export default function PlannerPage() {
   return (
@@ -41,7 +40,9 @@ function PlannerScreen() {
       ? rawDay
       : today;
   const mode = params.get("mode") === "day" ? "day" : "week";
-  const from = mode === "day" ? day : monday(day);
+  // A rolling week from the chosen day, so upcoming deadlines are in view
+  // even late in the calendar week.
+  const from = day;
   const to = mode === "day" ? day : addDays(from, 6);
   const query = new URLSearchParams({ from, to });
   const resource = useResource<Planner>(`/planner?${query}`);
@@ -70,20 +71,6 @@ function PlannerScreen() {
   const lastHour = Math.min(24, Math.ceil(latest / 60));
   const rowHeight = 64;
   const height = (lastHour - firstHour) * rowHeight;
-  async function exportIcs() {
-    setBusy(true);
-    setError("");
-    try {
-      await downloadCalendar(
-        `/planner/export?${query}`,
-        `campusflow-${from}-to-${to}.ics`,
-      );
-    } catch (e) {
-      setError(errorMessage(e));
-    } finally {
-      setBusy(false);
-    }
-  }
   async function replan() {
     setBusy(true);
     setError("");
@@ -161,15 +148,6 @@ function PlannerScreen() {
               Day
             </button>
           </div>
-          <button
-            className="button secondary small"
-            disabled={busy || !data}
-            onClick={() => void exportIcs()}
-            style={{ borderRadius: '10px', padding: '8px 12px' }}
-          >
-            <Download size={14} />
-            Export
-          </button>
         </div>
       </div>
       <ErrorBox message={error || resource.error} retry={resource.refresh} />
@@ -312,9 +290,9 @@ function PlannerScreen() {
             </div>
             {!items.length && !data.deadlines.length && (
               <div style={{ padding: '40px' }}>
-                <Empty title="Space for your next step.">
-                  Import your timetable to see classes, or add effort estimates to
-                  tasks to generate study blocks.
+                <Empty title="Nothing to schedule yet.">
+                  Study blocks appear once tasks have deadlines. Add your
+                  timetable in Setup so they fit around your classes.
                 </Empty>
               </div>
             )}

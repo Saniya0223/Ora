@@ -21,6 +21,14 @@ import { TaskForm } from "./task-form";
 import { useStudent } from "./shell";
 import { useFocus } from "./focus";
 import { TaskSourceDetails } from "./task-source-details";
+function sourceLabel(task: Detail) {
+  if (task.source === "CLASSROOM")
+    return `From Google Classroom${task.course?.name ? ` · ${task.course.name}` : ""}`;
+  if (task.source === "MANUAL_NOTICE") return "From a pasted notice";
+  if (task.source === "PDF") return "From an uploaded PDF";
+  return "Added by you";
+}
+
 export function TaskDetail({
   id,
   onDeleted,
@@ -97,11 +105,12 @@ export function TaskDetail({
             {task.isOverdue ? " · Overdue" : ""}
           </p>
           <p className="muted tiny">
-            {task.source.replaceAll("_", " ").toLowerCase()}
-            {task.isSourceBacked ? " · Source-managed task" : ""}
-            {task.sourceStatus === "CANCELLED" ? " · Source cancelled" : ""}
+            {sourceLabel(task)}
+            {task.sourceStatus === "CANCELLED" ? " · Cancelled at source" : ""}
           </p>
           <TaskSourceDetails task={task} timezone={timezone} />
+          <details className="more-details">
+          <summary>Effort, checklist, notes &amp; attachments</summary>
           <div className="effort-grid">
             <div>
               <span className="mini-icon">
@@ -177,14 +186,7 @@ export function TaskDetail({
             {tab === "Notes" && <TaskNotes key={task.id} task={task} />}{" "}
             {tab === "Attachments" && <TaskAttachments task={task} />}
           </div>
-          <button
-            className="button focus wide"
-            disabled={task.status !== "OPEN" || focus.busy}
-            onClick={() => void focus.start(task.id)}
-          >
-            <Icon name="clock" size={16} />
-            Start Focus (Pomodoro 25m)
-          </button>
+          </details>
           <div className="detail-actions">
             <button
               className="button secondary"
@@ -211,6 +213,14 @@ export function TaskDetail({
               {task.status === "COMPLETED" ? "Reopen" : "Mark Complete"}
             </button>
           </div>
+          <button
+            className="button ghost wide"
+            disabled={task.status !== "OPEN" || focus.busy}
+            onClick={() => void focus.start(task.id)}
+          >
+            <Icon name="clock" size={14} />
+            Start Focus (Pomodoro 25m)
+          </button>
           {editing && (
             <TaskForm
               task={task}

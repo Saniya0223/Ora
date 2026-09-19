@@ -100,32 +100,29 @@ export function Empty({
     </div>
   );
 }
+// Only states worth a glance get a badge; ordinary open tasks stay quiet.
 export function PriorityBadge({ task }: { task: TaskListItem }) {
-  const label =
-    task.status === "COMPLETED"
-      ? "Completed"
-      : task.status === "CANCELLED"
-        ? "Cancelled"
-        : task.effectivePriority === "HIGH"
-          ? "High Priority"
-          : task.effectivePriority === "MEDIUM"
-            ? "Upcoming"
-            : "Normal";
-  return (
-    <span
-      className={`badge ${task.status === "COMPLETED" ? "success" : task.effectivePriority === "HIGH" && task.status === "OPEN" ? "danger" : "neutral"}`}
-    >
-      {label}
-    </span>
-  );
+  const open = task.status === "OPEN";
+  const [label, tone] =
+    task.status === "COMPLETED" ? ["Done", "success"]
+    : task.status === "CANCELLED" ? ["Cancelled", "neutral"]
+    : open && task.isOverdue ? ["Overdue", "danger"]
+    : task.effectivePriority === "HIGH" ? ["High priority", "danger"]
+    : task.effectivePriority === "MEDIUM" ? ["Upcoming", "neutral"]
+    : [null, ""];
+  return label ? <span className={`badge ${tone}`}>{label}</span> : null;
 }
 export function CourseChip({ task }: { task: TaskListItem }) {
-  return task.course?.name ? (
-    <span className="course-chip" title={task.course.name}>
-      {task.course.name}
+  const fromClassroom = task.source === "CLASSROOM";
+  const label = task.course?.name ?? task.type.charAt(0) + task.type.slice(1).toLowerCase();
+  return (
+    <span
+      className={`course-chip${fromClassroom ? " from-classroom" : ""}`}
+      title={fromClassroom ? `From Google Classroom · ${label}` : label}
+    >
+      {fromClassroom && <GraduationCap size={11} strokeWidth={2.5} aria-hidden="true" />}
+      {label}
     </span>
-  ) : (
-    <span className="course-chip">{task.type.toLowerCase()}</span>
   );
 }
 export function Progress({ value }: { value: number | null }) {

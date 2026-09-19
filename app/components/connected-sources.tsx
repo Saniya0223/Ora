@@ -1,10 +1,12 @@
 "use client";
 import { useState } from "react";
-import type { Sources, ClassroomSyncStatus } from "../lib/types";
+import type { Sources } from "../lib/types";
+import { useClassroomSync } from "./classroom-sync";
 import { useResource, invalidate } from "../lib/data";
 import { request, errorMessage } from "../lib/api";
-import { deadline, syncLabel } from "../lib/presentation";
-import { safeSourceLink, syncExplanation } from "../lib/source-presentation";
+import { deadline } from "../lib/presentation";
+import { safeSourceLink, syncExplanation, syncSummary } from "../lib/source-presentation";
+import { RefreshCw } from "lucide-react";
 import { useStudent } from "./shell";
 import { ErrorBox, Icon, Modal, Skeleton } from "./ui";
 export function ConnectedSources({ onTimetable }: { onTimetable: () => void }) {
@@ -15,6 +17,7 @@ export function ConnectedSources({ onTimetable }: { onTimetable: () => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const classroomSync = useClassroomSync();
   const [courses, setCourses] = useState<
     { id: string; name: string; section: string }[] | null
   >(null);
@@ -28,26 +31,6 @@ export function ConnectedSources({ onTimetable }: { onTimetable: () => void }) {
     } catch (e) {
       setError(errorMessage(e));
       setBusy(false);
-    }
-  }
-  async function sync() {
-    setBusy(true);
-    setError("");
-    setMessage("");
-    try {
-      const r = await request<{ sync: ClassroomSyncStatus }>(
-        "/classroom/sync",
-        "POST",
-      );
-      const s = r.sync.lastResult;
-      setMessage(
-        `${syncExplanation(s)}${s ? ` ${s.created} created, ${s.updated} updated, ${s.cancelled} cancelled, ${s.ignored} ignored.` : ""}`,
-      );
-    } catch (e) {
-      setError(errorMessage(e));
-    } finally {
-      setBusy(false);
-      invalidate();
     }
   }
   async function choose() {
@@ -68,79 +51,22 @@ export function ConnectedSources({ onTimetable }: { onTimetable: () => void }) {
   return (
     <section className="card" id="sources">
       <h2>Connected Sources</h2>
-      <p className="muted">Manage your integrations.</p>
+      <p className="muted">Where CampusFlow gets your coursework and classes.</p>
       <ErrorBox message={error || resource.error} retry={resource.refresh} />
       {resource.loading && !source && <Skeleton rows={2} />}{" "}
-      {source && (
-        <div className="source-card">
-          <span className="source-icon green">
-            <Icon name="cap" size={25} />
-          </span>
-          <div className="source-copy">
-            <strong>Google Classroom</strong>
-            <p>
-              {source.account?.email ??
-                (source.connection === "CONNECTED"
-                  ? "Google Classroom connected"
-                  : "Connect to capture coursework.")}
-            </p>
-            <span className="source-status">
-              <span className="status-dot" />
-              {syncLabel(source.health, source.sync.status)}
-            </span>
-            <small>{source.selectedCourses.length} selected course(s)</small>
-            <small>
-              {source.sync.lastSuccessfulSyncAt
-                ? `Last successful sync ${deadline(source.sync.lastSuccessfulSyncAt, timezone)}`
-                : "No successful sync yet"}
-            </small>
-            {source.sync.status === "PARTIAL" && (
-              <small className="accent-text">
-                {syncExplanation(source.sync.lastResult)}
-              </small>
-            )}
-            {source.sync.lastResult?.reviewItems?.map((item) => {
-              const url = safeSourceLink(item.sourceUrl, true);
-              return <small key={item.sourceRef}>{source.selectedCourses.find((course) => course.id === item.courseId)?.name ?? "Classroom item"}: {item.code.replaceAll("_", " ").toLowerCase()}{url && <> · <a href={url} target="_blank" rel="noopener noreferrer">Review original ↗</a></>}</small>;
-            })}
-            {source.sync.lastErrorCode && (
-              <small className="accent-text">
-                {source.sync.lastErrorCode.replaceAll("_", " ").toLowerCase()}
-              </small>
-            )}
-            <div className="button-row source-actions">
-              {source.connection === "CONNECTED" && (
-                <button
-                  className="text-button tiny"
-                  disabled={busy}
-                  onClick={() => void choose()}
-                >
-                  Choose courses
-                </button>
-              )}
-              <button
-                className="text-button tiny"
-                disabled={busy}
-                onClick={() => void connect()}
-              >
-                {source.connection === "CONNECTED"
-                  ? "Reconnect"
-                  : "Connect Classroom"}
-              </button>
-            </div>
-          </div>
-          {source.connection === "CONNECTED" &&
-            source.health !== "REAUTH_REQUIRED" && (
-              <button
-                className="button secondary small"
-                disabled={busy || source.sync.status === "SYNCING"}
-                onClick={() => void sync()}
-              >
-                {busy ? "Working…" : "Sync"}
-              </button>
-            )}
-        </div>
-      )}
+      {source && <ClassroomCard
+        source={source}
+        syncing={classroomSync.syncing}
+        syncError={classroomSync.error}
+        busy={busy}
+        timezone={timezone}
+        onSync={() => {
+          setMessage("");
+          void classroomSync.sync();
+        }}
+        onChoose={() => void choose()}
+        onConnect={() => void connect()}
+      />}
       {timetable && (
         <div className="source-card">
           <span className="source-icon rose">
@@ -148,18 +74,18 @@ export function ConnectedSources({ onTimetable }: { onTimetable: () => void }) {
           </span>
           <div className="source-copy">
             <strong>Timetable</strong>
-            <p>
-              {timetable.source?.fileName ??
-                (timetable.status === "READY"
-                  ? "Your weekly classes"
-                  : "No timetable imported")}
-            </p>
-            <small>{timetable.slotCount} class slots</small>
-            <small>
-              {timetable.source
-                ? `Updated ${deadline(timetable.source.updatedAt, timezone)}`
-                : "Import a PDF or add classes manually."}
-            </small>
+            {timetable.status === "READY" ? (
+              <>
+                <p>{timetable.slotCount} classes a week</p>
+                <small>
+                  {timetable.source
+                    ? `From ${timetable.source.fileName} · updated ${deadline(timetable.source.updatedAt, timezone)}`
+                    : "Added manually"}
+                </small>
+              </>
+            ) : (
+              <p>Add your timetable so CampusFlow can plan around your classes.</p>
+            )}
           </div>
           <button className="button secondary small" onClick={onTimetable}>
             {timetable.status === "READY" ? "Edit" : "Add"}
@@ -214,7 +140,7 @@ export function ConnectedSources({ onTimetable }: { onTimetable: () => void }) {
                 });
                 setCourses(null);
                 setMessage(
-                  "Course selection saved. Use Sync to retrieve new work.",
+                  "Courses saved. Sync now to bring in their work.",
                 );
                 invalidate();
               } catch (e) {
@@ -229,5 +155,96 @@ export function ConnectedSources({ onTimetable }: { onTimetable: () => void }) {
         </Modal>
       )}
     </section>
+  );
+}
+
+function ClassroomCard({ source, syncing, syncError, busy, timezone, onSync, onChoose, onConnect }: {
+  source: Sources["classroom"];
+  syncing: boolean;
+  syncError: string;
+  busy: boolean;
+  timezone: string;
+  onSync: () => void;
+  onChoose: () => void;
+  onConnect: () => void;
+}) {
+  const connected = source.connection === "CONNECTED";
+  const summary = syncing
+    ? { tone: "busy" as const, title: "Syncing Classroom…", detail: "Checking for new announcements and coursework", changes: [] }
+    : syncError
+      ? { tone: "error" as const, title: "Classroom couldn't be synced right now", detail: syncError, changes: [] }
+      : syncSummary(source);
+  const result = source.sync.lastResult;
+  const courseNames = source.selectedCourses.map((c) => c.name ?? "Untitled course").join(", ");
+  return (
+    <div className="source-card classroom-source">
+      <span className="source-icon green">
+        <Icon name="cap" size={25} />
+      </span>
+      <div className="source-copy">
+        <div className="source-head">
+          <strong>Google Classroom</strong>
+          {connected && source.health !== "REAUTH_REQUIRED" && (
+            <button
+              className="button primary small"
+              disabled={busy || syncing}
+              onClick={onSync}
+            >
+              <RefreshCw size={13} className={summary.tone === "busy" ? "spin" : ""} />
+              {summary.tone === "busy" ? "Syncing…" : "Sync now"}
+            </button>
+          )}
+        </div>
+        <span className="source-status">
+          <span className={`status-dot ${connected ? "on" : ""}`} />
+          {connected ? "Connected" : "Not connected"}
+          {connected && courseNames && <span className="muted"> · {courseNames}</span>}
+        </span>
+        <div className={`sync-summary ${summary.tone}`} role="status">
+          <strong>
+            {summary.tone === "busy" ? "⟳" : summary.tone === "ok" ? "✓" : "⚠"} {summary.title}
+          </strong>
+          {summary.detail && <small>{summary.detail}</small>}
+          {summary.changes.length > 0 && (
+            <ul>{summary.changes.map((change) => <li key={change}>{change}</li>)}</ul>
+          )}
+          {summary.tone !== "busy" && result?.reviewItems?.map((item) => {
+            const url = safeSourceLink(item.sourceUrl, true);
+            const course = source.selectedCourses.find((c) => c.id === item.courseId)?.name ?? "Classroom";
+            return url ? (
+              <small key={item.sourceRef}>
+                {course} post · <a href={url} target="_blank" rel="noopener noreferrer">Review original ↗</a>
+              </small>
+            ) : null;
+          })}
+        </div>
+        {result && summary.tone !== "busy" && (
+          <details className="sync-details">
+            <summary>Details</summary>
+            <small>
+              Checked {result.announcementsScanned} announcements and {result.courseworkScanned} coursework
+              items in {result.coursesScanned} course{result.coursesScanned === 1 ? "" : "s"}
+              {result.ignored ? ` · ${result.ignored} with nothing to do` : ""}.
+              {source.sync.lastFinishedAt ? ` Finished ${deadline(source.sync.lastFinishedAt, timezone)}.` : ""}
+            </small>
+            {summary.tone !== "ok" && <small>{syncExplanation(result)}</small>}
+          </details>
+        )}
+        <div className="button-row source-actions">
+          {connected && (
+            <button className="text-button tiny" disabled={busy} onClick={onChoose}>
+              Choose courses
+            </button>
+          )}
+          <button
+            className={connected ? "text-button tiny" : "button primary small"}
+            disabled={busy}
+            onClick={onConnect}
+          >
+            {connected ? "Reconnect" : "Connect Classroom"}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }

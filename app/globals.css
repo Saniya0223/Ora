@@ -1206,19 +1206,21 @@ summary {
   font-size: 11px;
   opacity: 0.85;
 }
+/* Timetable classes are context, so they stay quiet; the study blocks and
+   deadlines CampusFlow plans are what should stand out. */
 .block-class {
-  background: #b3d4ff;
-  color: #1a498a;
-  border-color: #92beff;
+  background: #eef1f4;
+  color: #4f5a66;
+  border-color: #dde2e8;
 }
 .block-lab {
-  background: #ffbaba;
-  color: #8a1f1a;
-  border-color: #ff9e9e;
+  background: #f4efe9;
+  color: #6c5f52;
+  border-color: #e6ddd2;
 }
 .block-study {
-  background: #b5e6a1;
-  color: #2b5919;
+  background: linear-gradient(90deg, #3f7d22 0 4px, #c4ebaf 4px);
+  color: #1f4a10;
   border-color: #9cda85;
 }
 .block-event {
@@ -1282,13 +1284,13 @@ summary {
   background: #a6c78c;
 }
 .legend i.legend-class {
-  background: #b3d4ff;
+  background: #dde2e8;
 }
 .legend i.legend-lab {
-  background: #ffbaba;
+  background: #e6ddd2;
 }
 .legend i.legend-study {
-  background: #b5e6a1;
+  background: #3f7d22;
 }
 .legend i.legend-event {
   background: #fbe491;
@@ -1952,3 +1954,205 @@ body:has(.focus-dock) {
 .source-task-details small { display: block; }
 .source-task-details p { margin-block: 6px 12px; white-space: pre-line; }
 .source-task-details ul { padding-left: 20px; margin-block: 6px 12px; }
+
+/* Secondary actions (focus timer) stay visible but quiet. */
+.button.ghost {
+  background: transparent;
+  color: var(--ink);
+  border-color: var(--line);
+}
+.button.ghost:hover:not(:disabled) {
+  background: #f5efe5;
+}
+
+.course-chip.from-classroom {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+/* "What changed?" is the product's key moment, so it is the first thing in a task. */
+.change-callout {
+  background: #fff4dc;
+  border: 1px solid #f3d38b;
+  border-left: 4px solid #d99a16;
+  border-radius: 12px;
+  padding: 12px 14px;
+}
+.source-task-details section.change-callout { margin-block: 12px 10px; }
+.change-callout header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  color: #7a4d00;
+}
+.change-callout header small { color: #9a6a1b; }
+.change-row { margin-top: 8px; }
+.change-row > span {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: #9a6a1b;
+}
+.source-task-details .change-row p { margin: 2px 0 0; font-size: 15px; }
+.change-row s { color: var(--muted); }
+.change-row strong { color: #5a3a00; }
+.source-task-details .source-link { margin-bottom: 4px; }
+.source-task-details ul { list-style: disc; }
+.source-task-details li { margin-block: 2px; }
+
+.more-details {
+  border-top: 1px solid var(--line);
+  margin-top: 16px;
+  padding-top: 12px;
+}
+.more-details > summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+.more-details[open] > summary { margin-bottom: 14px; }
+
+.sidebar-sync {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 12px;
+  background: #f3efe8;
+}
+.sidebar-sync.ok { background: #edf4e2; }
+.sidebar-sync.warn { background: #fff4dc; }
+.sidebar-sync.error { background: #fff0ed; }
+.sidebar-sync.ok .status-dot { color: #4a7a2a; }
+.sidebar-sync.warn .status-dot { color: #c8871a; }
+.sidebar-sync.error .status-dot { color: #b3402a; }
+.sidebar-sync-status {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 12px;
+  font-weight: 600;
+}
+.sidebar-sync-status .status-dot { margin-top: 5px; }
+.sidebar-sync-status small {
+  display: block;
+  font-weight: 400;
+  color: var(--muted);
+}
+.sidebar-sync-message {
+  font-size: 11px;
+  color: var(--muted);
+}
+.spin { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* --- Connected Sources: one status hierarchy per source --- */
+.source-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.source-head strong { font-size: 14px; }
+.classroom-source .source-status { margin-top: 4px; font-size: 12px; }
+.status-dot.on { color: #4a7a2a; }
+.sync-summary {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #eef4e3;
+  color: #3b5225;
+}
+.sync-summary.busy { background: #f3efe8; color: var(--ink); }
+.sync-summary.warn { background: #fff4dc; color: #765021; }
+.sync-summary.error { background: #fff0ed; color: #93341f; }
+.sync-summary > strong { display: block; font-size: 13px; }
+.source-copy .sync-summary small { color: inherit; opacity: 0.85; font-size: 12px; }
+.sync-summary ul { margin: 6px 0 0; padding-left: 18px; font-size: 12px; list-style: disc; }
+.sync-summary a { text-decoration: underline; }
+.sync-details { margin-top: 8px; }
+.sync-details > summary { font-size: 11px; color: var(--muted); }
+.source-actions { margin-top: 10px; }
+
+/* --- Add & Setup: primary column, quieter aside --- */
+.section-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 0 0 -8px;
+}
+.quiet-card {
+  background: transparent;
+  box-shadow: none;
+}
+.quiet-card h2 { font-size: 16px; }
+.how-card summary { align-items: center; }
+.how-card summary strong { font-size: 13px; }
+.how-card p { font-size: 13px; line-height: 1.6; }
+
+/* --- Task list: finished work recedes --- */
+.task-list-item.is-done { opacity: 0.6; }
+.task-list-item.is-done:hover, .task-list-item.is-done.selected { opacity: 1; }
+
+/* --- Tablet: stack the two-pane pages --- */
+@media (max-width: 900px) {
+  .tasks-grid,
+  .setup-grid,
+  .dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+  .summary-grid { grid-template-columns: 1fr 1fr; }
+  .summary-card:last-child { grid-column: 1 / -1; }
+}
+
+/* --- Mobile: the sidebar becomes a compact top bar --- */
+@media (max-width: 760px) {
+  .app-layout { flex-direction: column; }
+  .app-sidebar {
+    width: 100%;
+    height: auto;
+    position: sticky;
+    top: 0;
+    z-index: 40;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 12px;
+    padding: 10px 14px;
+    border-right: 0;
+    border-bottom: 1px solid var(--sidebar-border);
+    overflow: visible;
+  }
+  .sidebar-brand { margin: 0; }
+  .sidebar-spacer { display: none; }
+  .sidebar-nav {
+    order: 3;
+    width: 100%;
+    flex-direction: row;
+    gap: 4px;
+    overflow-x: auto;
+  }
+  .sidebar-nav-item { padding: 8px 10px; font-size: 13px; gap: 6px; white-space: nowrap; }
+  .sidebar-footer { margin: 0 0 0 auto; flex-direction: row; align-items: center; gap: 8px; }
+  .sidebar-user { display: none; }
+  .sidebar-sync { padding: 0; background: transparent; }
+  .sidebar-sync-status, .sidebar-sync-message { display: none; }
+  .source-card { flex-wrap: wrap; }
+  .priority-list { margin: 0; }
+}
+@media (max-width: 430px) {
+  .sidebar-nav-icon { display: none; }
+  .sidebar-nav-item { padding: 8px 9px; }
+}
+
+/* Dashboard: a compact header so today's work leads the page. */
+.dashboard-heading { margin-bottom: 24px; }
+.dashboard-heading h1 { font-size: 26px; margin: 0; }
+.dashboard-heading .today-date { margin: 4px 0 0; font-size: 14px; font-weight: 500; color: var(--muted); }

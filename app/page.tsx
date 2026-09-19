@@ -11,18 +11,24 @@ import {
   Empty,
   ErrorBox,
   PriorityBadge,
-  Progress,
   Skeleton,
 } from "./components/ui";
-import { useFocus } from "./components/focus";
 import { CheckSquare, Clock, GraduationCap, Play } from "lucide-react";
+
+// The next class may be on a later day (e.g. Monday, seen on a Sunday).
+function classDay(start: string, now: string, zone: string) {
+  const day = (iso: string, opts: Intl.DateTimeFormatOptions) =>
+    new Intl.DateTimeFormat("en-GB", { timeZone: zone, ...opts }).format(new Date(iso));
+  return day(start, { dateStyle: "short" }) === day(now, { dateStyle: "short" })
+    ? null
+    : day(start, { weekday: "short" });
+}
 
 export default function DashboardPage() {
   const { data, loading, error, refresh } =
     useResource<Dashboard>("/dashboard");
   const [actionError, setActionError] = useState("");
   const [busy, setBusy] = useState("");
-  const focus = useFocus();
 
   async function complete(t: TaskListItem) {
     setBusy(t.id);
@@ -43,9 +49,8 @@ export default function DashboardPage() {
   if (!data)
     return (
       <div className="animate-in fade-in">
-        <div className="page-heading">
-          <h1>Your academic day</h1>
-          <p>A little clarity for everything ahead.</p>
+        <div className="page-heading dashboard-heading">
+          <h1>Dashboard</h1>
         </div>
         <ErrorBox message={error} retry={refresh} />
         {loading && <Skeleton rows={5} />}
@@ -53,42 +58,24 @@ export default function DashboardPage() {
     );
 
   const zone = data.date.timezone;
-  const hour = Number(clock(data.date.now, zone).slice(0, 2));
-  const greeting =
-    hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
 
   return (
     <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-      <div className="page-heading intro" style={{ marginBottom: '32px' }}>
+      <div className="page-heading dashboard-heading">
         <div>
-          <h1 style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            {greeting}, {data.profile.name.split(" ")[0]}{" "}
-            <span className="wave" aria-hidden="true" style={{ fontSize: '32px' }}>
-              👋
-            </span>
-          </h1>
-          <p className="today-date" style={{ fontWeight: 600, color: 'var(--ink)' }}>
+          <h1>Dashboard</h1>
+          <p className="today-date">
             {new Intl.DateTimeFormat("en-GB", {
               timeZone: zone,
               weekday: "long",
               day: "numeric",
               month: "long",
-              year: "numeric",
             }).format(new Date(data.date.now))}
+            {data.profile.academicWeek !== null && ` · Week ${data.profile.academicWeek}`}
           </p>
-          <span className="muted">
-            {[
-              data.profile.academicWeek !== null
-                ? `Week ${data.profile.academicWeek}`
-                : null,
-              data.profile.semester,
-            ]
-              .filter(Boolean)
-              .join(" · ")}
-          </span>
         </div>
       </div>
-      
+
       <ErrorBox message={error || actionError} retry={refresh} />
       
       <section className="summary-grid" aria-label="Daily summary">
@@ -99,7 +86,9 @@ export default function DashboardPage() {
           <div>
             <strong style={{ color: '#4a622a' }}>{data.summary.tasksToday}</strong>
             <p style={{ fontWeight: 600, color: '#4a622a' }}>Tasks today</p>
-            <small style={{ color: '#688243' }}>{data.summary.highPriority} high priority</small>
+            <small style={{ color: '#688243' }}>
+              {data.summary.highPriority ? `${data.summary.highPriority} high priority` : "Nothing urgent"}
+            </small>
           </div>
         </div>
         <div className="summary-card" style={{ background: '#fff0db', border: 'none' }}>
@@ -111,8 +100,8 @@ export default function DashboardPage() {
             <p style={{ fontWeight: 600, color: '#a85f09' }}>Study planned</p>
             <small style={{ color: '#c07e2c' }}>
               {data.summary.plannedStudyMinutes
-                ? "You’ve made room for progress."
-                : "Your next step starts here."}
+                ? "In today’s study blocks"
+                : "No study blocks today"}
             </small>
           </div>
         </div>
@@ -129,10 +118,10 @@ export default function DashboardPage() {
             </strong>
             <small style={{ color: '#c45846', fontWeight: 600 }}>
               {data.nextClass
-                ? [clock(data.nextClass.start, zone), data.nextClass.location]
+                ? [classDay(data.nextClass.start, data.date.now, zone), clock(data.nextClass.start, zone), data.nextClass.location]
                     .filter(Boolean)
                     .join(" · ")
-                : "Add your timetable in Setup"}
+                : <Link href="/setup#sources" className="text-link">Add your timetable</Link>}
             </small>
           </div>
         </div>
@@ -147,7 +136,7 @@ export default function DashboardPage() {
             </Link>
           </div>
           <div className="priority-list" style={{ background: 'var(--surface)', borderRadius: '16px', border: '1px solid var(--line)', overflow: 'hidden' }}>
-            {[...data.priorities, ...data.completedToday].map((t) => (
+            {data.priorities.map((t) => (
               <article className="priority-row" key={t.id} style={{ borderBottom: '1px solid var(--line)', margin: 0, padding: '16px 20px' }}>
                 <input
                   type="checkbox"
@@ -170,39 +159,33 @@ export default function DashboardPage() {
                   <p className="muted tiny" style={{ fontSize: '13px' }}>
                     {t.status === "COMPLETED"
                       ? "Completed today"
-                      : `${deadline(t.deadline, zone)} · ${duration(t.estimatedMinutes)}`}
+                      : [t.deadline ? `Due ${deadline(t.deadline, zone)}` : "No deadline", t.estimatedMinutes ? duration(t.estimatedMinutes) : null].filter(Boolean).join(" · ")}
                   </p>
-                  {t.status === "OPEN" && (
-                    <Progress value={t.progress.timePercent} />
-                  )}
                 </div>
                 <div className="priority-actions">
                   <PriorityBadge task={t} />
-                  {t.status === "OPEN" &&
-                    (t.effectivePriority === "HIGH" ? (
-                      <button
-                        className="button focus small"
-                        disabled={focus.busy}
-                        onClick={() => void focus.start(t.id)}
-                      >
-                        Start Focus
-                      </button>
-                    ) : (
-                      <Link
-                        className="button secondary small"
-                        href={`/tasks?task=${t.id}`}
-                      >
-                        Open Task
-                      </Link>
-                    ))}
+                  {t.status === "OPEN" && (
+                    <Link
+                      className="button secondary small"
+                      href={`/tasks?task=${t.id}`}
+                    >
+                      Open Task
+                    </Link>
+                  )}
                 </div>
               </article>
             ))}
+            {data.completedToday.length > 0 && (
+              <p className="muted tiny" style={{ padding: '12px 20px', margin: 0 }}>
+                <Link href="/tasks" className="text-link">
+                  {data.completedToday.length} completed today ✓
+                </Link>
+              </p>
+            )}
             {!data.priorities.length && !data.completedToday.length && (
               <div style={{ padding: '24px' }}>
-                <Empty title="A little breathing room.">
-                  No priorities today.{" "}
-                  <Link href="/tasks" className="text-link">Explore your tasks</Link> or add a notice.
+                <Empty title="Nothing due soon.">
+                  New Classroom work will appear here after a sync.
                 </Empty>
               </div>
             )}
@@ -257,13 +240,13 @@ export default function DashboardPage() {
               ))}
             </ol>
             {!data.todaySchedule.length && (
-              <Empty title="Your day is open.">
-                Import classes or add task estimates to build your schedule.
+              <Empty title="Nothing scheduled today.">
+                Study blocks appear here when tasks have deadlines.
               </Empty>
             )}
             
-            <Link className="button focus wide" href="/tasks" style={{ marginTop: '16px' }}>
-              <Play size={16} fill="currentColor" /> Start Focus Session
+            <Link className="button ghost wide" href="/tasks" style={{ marginTop: '16px' }}>
+              <Play size={14} /> Start a focus session
             </Link>
           </div>
         </section>
