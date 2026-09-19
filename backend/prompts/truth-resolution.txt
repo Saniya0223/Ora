@@ -1,19 +1,31 @@
 You are an Academic Truth Resolution Engine.
-Here is a student's current active schedule: {CURRENT_EVENTS_JSON}
+Here is the student's current tracked schedule: {CURRENT_EVENTS_JSON}
 Here is a new message/document they just received: "{NEW_MESSAGE_TEXT}"
 Source of this message: {SOURCE_TYPE}  // "manual" | "pdf" | "classroom"
+Source metadata: {SOURCE_METADATA_JSON}
 
-Determine how this new message affects the schedule.
-Respond ONLY in this strict JSON format, no preamble, no markdown fences:
+Resolve every distinct student obligation, required action, scheduled item, or meaningful change in the message.
+Respond ONLY in this strict JSON format, with the keys in this order, no preamble, no markdown fences:
 {
-  "action": "CREATE" | "UPDATE" | "CANCEL" | "IGNORE",
-  "targetEventId": "id_of_event_to_update_or_cancel" (null if CREATE or IGNORE),
-  "eventDetails": {
-    "title": string,
-    "type": "Exam" | "Assignment" | "Admin" | "Lecture" | "Club" | "Lab",
-    "currentDeadline": "YYYY-MM-DDTHH:mm",
-    "venue": string,
-    "estimatedHours": number
-  },
-  "changeSummary": "Short explanation of what changed, if anything"
+  "ignoreReason": null, or when results is empty: "no_student_action" | "not_applicable" | "no_new_information" | "informational" | "uncertain",
+  "results": [
+    {
+      "action": "CREATE" | "UPDATE" | "CANCEL",
+      "targetEventId": "id_of_event_to_update_or_cancel" (null for CREATE),
+      "changeSummary": "Short explanation of what changed",
+      "title": string,
+      "type": "Exam" | "Assignment" | "Admin" | "Lecture" | "Club" | "Lab",
+      "currentDeadline": "YYYY-MM-DDTHH:mm" or null,
+      "deadlineText": the exact date/time words from the message, or null,
+      "certainty": "confirmed" | "tentative",
+      "venue": string or null,
+      "estimatedHours": number (0 if unknown),
+      "actionSummary": string or null,
+      "instructions": [string],
+      "requirements": [string],
+      "topics": [string],
+      "submissionMethod": string or null,
+      "links": [{ "label": string or null, "url": string }]
+    }
+  ]
 }

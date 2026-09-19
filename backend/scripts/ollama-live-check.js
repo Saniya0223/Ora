@@ -27,7 +27,11 @@ const existing = {
   changeHistory: [],
 };
 const profile = { name: "Demo Student", program: "Computer Science", year: "3", section: "A" };
-const checkNotice = (text, events = []) => resolveNotice({ text, sourceType: "manual", events, profile, now }, { ai });
+// v2 answers carry results[]; the first result is what these checks inspect.
+const checkNotice = async (text, events = []) => {
+  const { results } = await resolveNotice({ text, sourceType: "manual", events, profile, now }, { ai });
+  return results[0] ?? { action: "IGNORE", targetEventId: null, eventDetails: null };
+};
 
 try {
   const created = await checkNotice("New notice: Operating Systems assignment is due 21 September 2026 at 5:00 PM. Estimated work: 3 hours.");
@@ -41,8 +45,9 @@ try {
   assert.equal(cancelled.action, "CANCEL");
   assert.equal(cancelled.targetEventId, eventId);
 
+  // Unconfirmed information is either ignored or tracked as tentative, never as a confirmed deadline.
   const ambiguous = await checkNotice("There may be a new assignment next week, but the subject and deadline have not been confirmed.");
-  assert.equal(ambiguous.action, "IGNORE");
+  assert.ok(ambiguous.action === "IGNORE" || ambiguous.eventDetails?.certainty === "tentative" || ambiguous.eventDetails?.currentDeadline === null);
 
   const db = { async send(command) {
     if (command.constructor.name === "GetCommand") return { Item: { timetableSlots: [] } };

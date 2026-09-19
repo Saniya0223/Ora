@@ -140,9 +140,28 @@ type TaskDetail = TaskListItem & {
     model: string | null;                              // "openai/gpt-oss-120b"
     generatedAt: ISODateTime;
   } | null;
+  details: TaskSourceDetails | null;                   // source-owned detail; null for manual tasks and older items
   notes: string;                                       // plain text / simple markdown
   checklist: ChecklistItem[];                          // in display order
   attachments: Attachment[];
+};
+
+// What the source says about the work, extracted from the notice or Classroom
+// post. Read-only for the student; refreshed when the source changes. Every
+// value is source-supported: empty lists and nulls mean "not stated".
+type TaskSourceDetails = {
+  actionSummary: string | null;      // what the student must do, one sentence
+  instructions: string[];            // steps, in order
+  requirements: string[];            // things to bring or have
+  topics: string[];                  // syllabus / chapters
+  submissionMethod: string | null;
+  links: { label: string | null; url: string }[]; // only URLs present in the source text
+  venue: string | null;
+  certainty: "confirmed" | "tentative";
+  tentativeDeadline: ISODateTime | null; // set only when tentative; `deadline` is then null
+  deadlineText: string | null;       // the source's own words, e.g. "tomorrow 6 PM"
+  postedAt: ISODateTime | null;      // when the source was posted
+  updatedAt: ISODateTime | null;     // when the source was last edited
 };
 
 type ChecklistItem = { id: string; text: string; done: boolean; createdAt: ISODateTime; completedAt: ISODateTime | null };
@@ -231,6 +250,14 @@ type SyncResult = {
   coursesScanned: number; announcementsScanned: number; courseworkScanned: number;
   processed: number; created: number; updated: number; cancelled: number; ignored: number; failed: number;
   truncated: boolean;              // stopped at the time budget; the rest resumes next run
+  // Optional: absent on results recorded before these existed.
+  ignoredReasons?: {               // sums to `ignored`
+    modelIgnored: number;          // nothing trackable in the post
+    alreadyProcessed: number;      // the same post was ingested before
+    duplicate: number;             // an equal item already existed
+    noChange: number;              // an update restated known information
+  };
+  rateLimited?: boolean;           // the AI provider was still rate limiting; the rest resumes next run
 };
 
 type ClassroomSyncStatus = {
@@ -653,7 +680,10 @@ A pasted or uploaded notice goes through the same path as Classroom:
 
 > GPT-OSS 20B → Truth Resolution (CREATE / UPDATE / CANCEL / IGNORE) → AcademicEvent → Task
 
-There is exactly one notice pipeline.
+There is exactly one notice pipeline. A notice may contain several obligations
+("Submit Assignment 3 by Friday. Quiz 2 is Monday."). Each becomes its own
+item and Task. Relative dates ("tomorrow 6 PM") are read from when the notice
+was posted; for pasted text, that is when it was received.
 
 ### `POST /ingest` (pasted text)
 
@@ -662,13 +692,22 @@ There is exactly one notice pipeline.
 **Response:** 201 for `CREATE`, otherwise 200.
 
 ```ts
-{ action: "CREATE" | "UPDATE" | "CANCEL" | "IGNORE";
-  event: AcademicEvent | null;          // null for IGNORE
-  changeSummary: string;
-  taskId?: string }                     // the linked Task (= event ID) when an event was written
+{ action: "CREATE" | "UPDATE" | "CANCEL" | "IGNORE"; // the first item that changed something
+  event: AcademicEvent | null;          // null when nothing was tracked
+  changeSummary: string;                // student-safe; explains an IGNORE too
+  taskId?: string;                      // the linked Task (= event ID) when an event was written
+  // Added fields; the four above keep their meaning.
+  reason: "modelIgnored" | "alreadyProcessed" | "duplicate" | "noChange" | null; // why, for an IGNORE
+  modelIgnoreReason?: "no_student_action" | "not_applicable" | "no_new_information" | "informational" | "uncertain" | "unspecified";
+  partial: boolean;                     // true when some items of the notice could not be applied
+  results: {                            // every item of the notice, in order
+    action: "CREATE" | "UPDATE" | "CANCEL" | "IGNORE" | "FAILED";
+    event: AcademicEvent | null; changeSummary: string; taskId?: string;
+    reason: string | null; code?: string;  // code: the error code of a FAILED item
+  }[] }
 ```
 
-`AcademicEvent` is `{ userId, eventId, title, type: "Exam"|"Assignment"|"Admin"|"Lecture"|"Club"|"Lab", currentDeadline, venue: string|null, estimatedHours, status: "ACTIVE"|"CANCELLED"|"DONE", sourceType, sourceRef, priorityScore, changeHistory: string[] }`. The UI should work with the linked Task (`GET /tasks/{taskId}`) rather than the raw event.
+`AcademicEvent` is `{ userId, eventId, title, type: "Exam"|"Assignment"|"Admin"|"Lecture"|"Club"|"Lab", currentDeadline: ISODateTime | null, venue: string|null, estimatedHours, status: "ACTIVE"|"CANCELLED"|"DONE", sourceType, sourceRef, priorityScore, changeHistory: string[], details?, sourceMeta? }`. `currentDeadline` is `null` for an undated or tentative item. The UI should work with the linked Task (`GET /tasks/{taskId}`) rather than the raw event.
 
 **Errors:**
 
@@ -712,7 +751,7 @@ Starts a PDF upload for notice or timetable import.
 
 ### `GET /events` (legacy)
 
-Returns `{ events: AcademicEvent[] }`: ACTIVE events sorted by deadline. It is used by the current UI. New screens should use `GET /tasks`.
+Returns `{ events: AcademicEvent[] }`: ACTIVE events sorted by deadline, undated or tentative ones (`currentDeadline: null`) last. It is used by the current UI. New screens should use `GET /tasks`.
 
 ---
 
@@ -751,7 +790,7 @@ Health reflects **real sync results**. Holding Google credentials is never, on i
 | `ERROR` | The last sync failed (`lastErrorCode`). `SYNC_INTERRUPTED` means a run died mid-way. | Error + Sync |
 | `REAUTH_REQUIRED` | Google access expired or was revoked. | "Reconnect Google Classroom" |
 
-`PARTIAL` means Classroom was reachable, but some items failed or the run hit its time budget. Those items retry automatically on the next sync. `lastResult` has the counts.
+`PARTIAL` means Classroom was reachable, but some items failed, the run hit its time budget, or the AI provider kept rate limiting (`lastResult.rateLimited`). Those items retry automatically on the next sync. `lastResult` has the counts, and `lastResult.ignoredReasons` says why items were ignored.
 
 ### `POST /classroom/sync` (Sync Now)
 
@@ -765,7 +804,8 @@ Runs the **same** production sync as the automatic 15-minute schedule. It uses a
 { "sync": { "status": "SUCCESS", "trigger": "manual", "lastAttemptAt": "2026-09-21T06:31:00.000Z",
   "lastFinishedAt": "2026-09-21T06:31:04.000Z", "lastSuccessfulSyncAt": "2026-09-21T06:31:04.000Z", "lastErrorCode": null,
   "lastResult": { "coursesScanned": 1, "announcementsScanned": 3, "courseworkScanned": 2, "processed": 1,
-    "created": 1, "updated": 0, "cancelled": 0, "ignored": 0, "failed": 0, "truncated": false } } }
+    "created": 1, "updated": 0, "cancelled": 0, "ignored": 0, "failed": 0, "truncated": false,
+    "ignoredReasons": { "modelIgnored": 0, "alreadyProcessed": 0, "duplicate": 0, "noChange": 0 }, "rateLimited": false } } }
 ```
 
 **Errors:** `CLASSROOM_NOT_CONNECTED` (409), `SYNC_IN_PROGRESS` (409), `REAUTH_REQUIRED` (409, with `sync`), `SYNC_FAILED` (502, with `sync` when known).

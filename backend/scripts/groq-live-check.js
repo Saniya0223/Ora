@@ -22,7 +22,11 @@ const existing = {
   status: "ACTIVE", sourceType: "manual", sourceRef: null, priorityScore: 0, changeHistory: [],
 };
 const profile = { name: "Demo Student", program: "Computer Science", year: "3", section: "A" };
-const checkNotice = (text, events = []) => resolveNotice({ text, sourceType: "classroom", events, profile, now }, { ai });
+// v2 answers carry results[]; the first result is what these checks inspect.
+const checkNotice = async (text, events = []) => {
+  const { results } = await resolveNotice({ text, sourceType: "classroom", events, profile, now }, { ai });
+  return results[0] ?? { action: "IGNORE", targetEventId: null, eventDetails: null };
+};
 
 try {
   const created = await checkNotice("[Classroom] CS301: Coursework 'Operating Systems assignment'; due 2026-09-21T17:00.");
@@ -36,8 +40,9 @@ try {
   assert.equal(cancelled.action, "CANCEL");
   assert.equal(cancelled.targetEventId, eventId);
 
+  // Unconfirmed information is either ignored or tracked as tentative, never as a confirmed deadline.
   const ambiguous = await checkNotice("[Classroom] CS301: Announcement 'There may be a new assignment next week, but the subject and deadline are not confirmed.'");
-  assert.equal(ambiguous.action, "IGNORE");
+  assert.ok(ambiguous.action === "IGNORE" || ambiguous.eventDetails?.certainty === "tentative" || ambiguous.eventDetails?.currentDeadline === null);
 
   // Prove the 120B model is reachable through the same provider. Nothing in the
   // Classroom path routes here; it is verified available for later reasoning use.

@@ -52,8 +52,10 @@ export async function handleRequest(request, { db, bedrock, s3, textract, env = 
       return json(202, await startDocument({ s3Key, kind: "notice" }, { ...dependencies, s3, textract, bucket: env.UPLOAD_BUCKET }));
     }
     if (method === "GET") {
+      // Undated or tentative items (currentDeadline null) sort last.
+      const order = (event) => (event.currentDeadline ? deadlineInstant(event.currentDeadline) : Number.POSITIVE_INFINITY);
       const events = (await queryEvents(dependencies)).filter((event) => event.status === "ACTIVE")
-        .sort((left, right) => deadlineInstant(left.currentDeadline) - deadlineInstant(right.currentDeadline));
+        .sort((left, right) => order(left) - order(right) || left.eventId.localeCompare(right.eventId));
       return json(200, { events });
     }
     const result = await ingestNotice({ text, sourceType: "manual", sourceRef: null }, dependencies);
