@@ -13,6 +13,7 @@
     "pretypecheck": "next typegen",
     "typecheck": "tsc --noEmit",
     "test": "npm run test --workspace @campusflow/backend",
+    "test:frontend": "node --test app/tests/frontend.test.cjs",
     "sam:validate": "sam validate --lint --template-file template.yaml",
     "sam:build": "sam build --template-file template.yaml",
     "sam:local": "sam local start-api --port 3001"

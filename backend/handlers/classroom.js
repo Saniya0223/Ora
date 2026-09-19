@@ -3,7 +3,8 @@ import { classroom_v1 } from "googleapis/build/src/apis/classroom/v1.js";
 import { OAuth2Client } from "google-auth-library";
 import { z } from "zod";
 import { db, bedrock } from "../lib/clients.js";
-import { allPages, connectedClient, createState, oauthClient, storeTokens, syncClassroom, verifyState } from "../lib/classroom.js";
+import { allPages, connectedClient, createState, oauthClient, storeTokens, verifyState } from "../lib/classroom.js";
+import { runClassroomSync } from "../lib/classroom-run.js";
 import { IngestionError } from "../lib/errors.js";
 
 const json = (statusCode, body) => ({ statusCode, headers: { "content-type": "application/json", "cache-control": "no-store" }, body: JSON.stringify(body) });
@@ -12,7 +13,7 @@ export async function handleClassroom(request, dependencies) {
   try {
     const method = request.requestContext?.http?.method;
     const path = request.rawPath;
-    if (method === "OPTIONS" && path === "/classroom/courses") {
+    if (method === "OPTIONS" && ["/classroom/courses", "/classroom/sync"].includes(path)) {
       return { statusCode: 204, headers: { "cache-control": "no-store" }, body: "" };
     }
     if (method === "GET" && ["/classroom/connect", "/classroom/auth/start"].includes(path)) {
@@ -36,6 +37,22 @@ export async function handleClassroom(request, dependencies) {
       const courses = await allPages((pageToken) => api.courses.list({ studentId: "me", courseStates: ["ACTIVE"], pageSize: 100, pageToken }), "courses");
       return json(200, { courses: courses.map(({ id, name, section }) => ({ id, name, section: section ?? "" })) });
     }
+    // Sync Now. Runs the same production sync as the 15-minute scheduler, with a
+    // time budget that fits the API timeout; unfinished work resumes next run.
+    if (method === "POST" && path === "/classroom/sync") {
+      const run = dependencies.runSync ?? runClassroomSync;
+      let outcome;
+      try {
+        outcome = await run({ db: dependencies.db, bedrock: dependencies.bedrock, ai: dependencies.ai, env }, { trigger: "manual", budgetMs: 20_000, enrich: false });
+      } catch (error) {
+        const status = error.syncStatus;
+        if (status?.status === "REAUTH_REQUIRED") return json(409, { error: { code: "REAUTH_REQUIRED", message: "Reconnect Google Classroom to keep syncing." }, sync: status });
+        return json(502, { error: { code: "SYNC_FAILED", message: "Google Classroom could not be synced. Please try again." }, ...(status ? { sync: status } : {}) });
+      }
+      if (outcome.skipped === "DISCONNECTED") return json(409, { error: { code: "CLASSROOM_NOT_CONNECTED", message: "Connect Google Classroom and choose courses first." } });
+      if (outcome.skipped === "IN_PROGRESS") return json(409, { error: { code: "SYNC_IN_PROGRESS", message: "A sync is already running. Check back in a moment." } });
+      return json(200, { sync: outcome });
+    }
     if (method === "PUT" && path === "/classroom/courses") {
       const body = z.strictObject({ courseIds: z.array(z.string().min(1)).max(100) }).safeParse(JSON.parse(request.body ?? ""));
       if (!body.success) throw new IngestionError(400, "INVALID_COURSES", "Choose valid Classroom courses.");
@@ -50,5 +67,5 @@ export async function handleClassroom(request, dependencies) {
     return json(503, { error: { code: "CLASSROOM_UNAVAILABLE", message: "Google Classroom is unavailable. Please try again." } });
   }
 }
-export const handler = (request) => handleClassroom(request, { db });
-export const schedulerHandler = async () => syncClassroom({ db, bedrock, env: process.env });
+export const handler = (request) => handleClassroom(request, { db, bedrock });
+export const schedulerHandler = async () => runClassroomSync({ db, bedrock, env: process.env }, { trigger: "scheduled" });

@@ -12,7 +12,10 @@ const timestamp = z.iso.datetime({ offset: true });
 const localDeadline = z.iso.datetime({ local: true, precision: -1 })
   .regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/);
 
+// Stable identity for editing one slot. Optional so slots saved before IDs
+// existed, and slots returned by timetable extraction, still parse.
 export const timetableSlotSchema = z.strictObject({
+  id: z.uuid().optional(),
   day: z.enum(["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]),
   startTime: time,
   endTime: time,
@@ -22,6 +25,43 @@ export const timetableSlotSchema = z.strictObject({
 }).refine((slot) => slot.startTime < slot.endTime, {
   message: "A timetable slot must end after it starts on the same day",
   path: ["endTime"],
+});
+
+const clockTime = z.string().regex(/^([01][0-9]|2[0-3]):[0-5][0-9]$/, "Use 24-hour HH:mm");
+
+// Student planning preferences. dailyStudyHours mirrors the planner UI range.
+export const planningPreferencesSchema = z.strictObject({
+  dailyStudyHours: z.number().min(1).max(12).multipleOf(0.25),
+  preferredStudyStart: clockTime,
+  preferredStudyEnd: clockTime,
+  autoScheduleStudyBlocks: z.boolean(),
+  avoidClassConflicts: z.boolean(),
+}).refine((value) => value.preferredStudyStart < value.preferredStudyEnd, {
+  message: "The preferred study window must end after it starts on the same day",
+  path: ["preferredStudyEnd"],
+});
+
+export const syncResultSchema = z.strictObject({
+  coursesScanned: z.number().int().nonnegative(),
+  announcementsScanned: z.number().int().nonnegative(),
+  courseworkScanned: z.number().int().nonnegative(),
+  processed: z.number().int().nonnegative(),
+  created: z.number().int().nonnegative(),
+  updated: z.number().int().nonnegative(),
+  cancelled: z.number().int().nonnegative(),
+  ignored: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative(),
+  truncated: z.boolean(),
+});
+
+export const classroomSyncStatusSchema = z.strictObject({
+  status: z.enum(["SYNCING", "SUCCESS", "PARTIAL", "ERROR", "REAUTH_REQUIRED"]),
+  trigger: z.enum(["scheduled", "manual"]),
+  lastAttemptAt: timestamp,
+  lastFinishedAt: timestamp.nullable(),
+  lastSuccessfulSyncAt: timestamp.nullable(),
+  lastErrorCode: z.string().nullable(),
+  lastResult: syncResultSchema.nullable(),
 });
 
 export const studentProfileSchema = z.strictObject({
@@ -38,6 +78,30 @@ export const studentProfileSchema = z.strictObject({
   }).optional(),
   connectedCourses: z.array(identifier),
   timetableSlots: z.array(timetableSlotSchema),
+  // Everything below is optional so profiles saved before these fields existed
+  // keep parsing, including inside the Classroom sync, which parses strictly.
+  semester: z.string().min(1).max(60).optional(),
+  semesterStartDate: date.optional(),
+  timezone: z.string().min(1).max(64).optional(),
+  planning: planningPreferencesSchema.optional(),
+  timetableSource: z.strictObject({
+    kind: z.enum(["PDF", "MANUAL"]),
+    fileName: z.string().max(200).nullable(),
+    jobId: z.uuid().nullable(),
+    importedAt: timestamp,
+    updatedAt: timestamp,
+  }).optional(),
+  classroomAccount: z.strictObject({
+    email: z.string().max(320).nullable(),
+    name: z.string().max(200).nullable(),
+    fetchedAt: timestamp,
+  }).optional(),
+  classroomSync: classroomSyncStatusSchema.optional(),
+  // Epoch ms until which a sync run holds the lease; absent when idle.
+  classroomSyncLease: z.number().int().nonnegative().optional(),
+  // Planner bookkeeping. Loose so its internal shape can evolve without ever
+  // failing the strict profile parse that the Classroom sync depends on.
+  planningState: z.looseObject({}).optional(),
 });
 
 export const academicEventSchema = z.strictObject({
@@ -60,6 +124,7 @@ export const classroomSyncStateSchema = z.strictObject({
   userId: identifier,
   courseId: identifier,
   lastSyncedAt: timestamp,
+  courseName: z.string().nullable().optional(),
 });
 
 export const scheduleBlocksSchema = z.strictObject({

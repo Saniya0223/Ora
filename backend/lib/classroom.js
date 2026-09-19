@@ -90,19 +90,30 @@ export function classroomText(course, item, kind) {
   return `[Classroom] ${safe(course.name)}: Announcement '${safe(item.text)}'.`;
 }
 
-export async function syncClassroom({ db, ai, bedrock, env, Classroom = classroom_v1.Classroom, OAuth2 = OAuth2Client, now = () => new Date() }) {
+export const emptySyncResult = () => ({ coursesScanned: 0, announcementsScanned: 0, courseworkScanned: 0, processed: 0, created: 0, updated: 0, cancelled: 0, ignored: 0, failed: 0, truncated: false });
+const ACTION_COUNTER = { CREATE: "created", UPDATE: "updated", CANCEL: "cancelled", IGNORE: "ignored" };
+
+// budgetMs bounds how long the run may keep starting new items. A truncated
+// course keeps its watermark, so the next run resumes it; ingestion is
+// idempotent, so replaying already-processed items cannot duplicate anything.
+export async function syncClassroom({ db, ai, bedrock, env, Classroom = classroom_v1.Classroom, OAuth2 = OAuth2Client, now = () => new Date(), budgetMs = Number.POSITIVE_INFINITY, startedAt = Date.now() }) {
   const { client, profile: current } = await connectedClient({ db, env, OAuth2 });
   const api = new Classroom({ auth: client });
-  let processed = 0;
-  let failed = 0;
+  const result = emptySyncResult();
+  const outOfTime = () => Date.now() - startedAt > budgetMs;
   for (const courseId of current.connectedCourses) {
+    if (outOfTime()) { result.truncated = true; break; }
     const sync = await db.send(new GetCommand({ TableName: env.CLASSROOM_SYNC_STATE_TABLE, Key: { userId: DEMO_USER_ID, courseId }, ConsistentRead: true }));
     const floor = sync.Item?.lastSyncedAt;
     const course = (await api.courses.get({ id: courseId })).data;
+    const courseName = course.name ?? null;
     const [announcements, coursework] = await Promise.all([
       allPages((pageToken) => api.courses.announcements.list({ courseId, pageSize: 100, pageToken }), "announcements"),
       allPages((pageToken) => api.courses.courseWork.list({ courseId, pageSize: 100, pageToken, orderBy: "updateTime asc" }), "courseWork"),
     ]);
+    result.coursesScanned++;
+    result.announcementsScanned += announcements.length;
+    result.courseworkScanned += coursework.length;
     const items = [
       ...announcements.map((item) => ({ item, kind: "announcement" })),
       ...coursework.map((item) => ({ item, kind: "coursework" })),
@@ -110,21 +121,38 @@ export async function syncClassroom({ db, ai, bedrock, env, Classroom = classroo
     // One unparseable announcement must not abandon the rest of the course.
     // ingestNotice is idempotent per source item (UUID v5 over the notice text),
     // so replaying a course after a failure cannot duplicate an event.
+    let courseFailed = false;
+    let courseTruncated = false;
     for (const { item, kind } of items) {
+      if (outOfTime()) { courseTruncated = true; result.truncated = true; break; }
       const sourceRef = `${courseId}:${kind}:${item.id}`;
       try {
-        await ingestNotice({ text: classroomText(course, item, kind), sourceType: "classroom", sourceRef }, { db, ai, bedrock, env, tableName: env.ACADEMIC_EVENTS_TABLE, profileTableName: env.STUDENT_PROFILE_TABLE, modelId: env.BEDROCK_MODEL_ID, now });
-        processed++;
+        const outcome = await ingestNotice({ text: classroomText(course, item, kind), sourceType: "classroom", sourceRef }, { db, ai, bedrock, env, tableName: env.ACADEMIC_EVENTS_TABLE, profileTableName: env.STUDENT_PROFILE_TABLE, modelId: env.BEDROCK_MODEL_ID, now, taskContext: { courseName } });
+        result.processed++;
+        if (ACTION_COUNTER[outcome.action]) result[ACTION_COUNTER[outcome.action]]++;
       } catch (error) {
-        failed++;
+        result.failed++;
+        courseFailed = true;
         // Never log notice text, model output, or credentials: codes only.
         console.error(JSON.stringify({ code: "CLASSROOM_ITEM_FAILED", courseId, kind, itemId: item.id, reason: error?.code ?? error?.name ?? "UNKNOWN" }));
       }
     }
-    // The watermark only advances on a clean pass, so a failed item is retried
-    // on the next cycle instead of being skipped permanently.
+    // The watermark only advances after a clean, complete pass of this course,
+    // so a failed item is retried next cycle instead of being skipped for good.
+    // Failures are tracked per course: one bad course never holds back another.
     const newest = [...announcements, ...coursework].map((item) => item.updateTime).filter(Boolean).sort().at(-1);
-    if (!failed && newest && (!floor || Date.parse(newest) > Date.parse(floor))) await db.send(new PutCommand({ TableName: env.CLASSROOM_SYNC_STATE_TABLE, Item: { userId: DEMO_USER_ID, courseId, lastSyncedAt: newest } }));
+    const advance = !courseFailed && !courseTruncated && newest && (!floor || Date.parse(newest) > Date.parse(floor));
+    // The course name is kept beside the watermark so Tasks can show it.
+    if (advance || (floor && (sync.Item?.courseName ?? null) !== courseName)) {
+      await db.send(new PutCommand({ TableName: env.CLASSROOM_SYNC_STATE_TABLE, Item: { userId: DEMO_USER_ID, courseId, lastSyncedAt: advance ? newest : floor, courseName } }));
+    }
   }
-  return { processed, failed };
+  // Label the connected account once; a failure here never fails the sync.
+  if (!current.classroomAccount) {
+    try {
+      const me = (await api.userProfiles.get({ userId: "me" })).data;
+      result.account = { email: me.emailAddress ?? null, name: me.name?.fullName ?? null };
+    } catch { /* optional metadata */ }
+  }
+  return result;
 }

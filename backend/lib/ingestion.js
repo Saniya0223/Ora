@@ -4,6 +4,7 @@ import { z } from "zod";
 import { academicEventSchema, studentProfileSchema } from "./contracts.js";
 import { resolveNotice } from "./bedrock.js";
 import { IngestionError } from "./errors.js";
+import { syncTaskForEvent } from "./tasks.js";
 import { deadlineInstant } from "./time.js";
 
 export const DEMO_USER_ID = "demo-user";
@@ -61,9 +62,21 @@ function unchanged(event, changeSummary = "This information is already reflected
   return { action: "IGNORE", event, changeSummary };
 }
 
-// Shared by the HTTP handler now and Classroom/PDF producers in later phases.
-// Only trusted callers supply provenance; it never comes from the browser body.
+// Shared by the manual, PDF, and Classroom producers. After the AcademicEvent
+// is committed, its student-facing Task is created or updated. That step never
+// fails ingestion; a missed Task is repaired by reconciliation on the next read.
+// dependencies.taskContext.courseName, when a producer knows it, labels the Task.
 export async function ingestNotice(input, dependencies) {
+  const result = await resolveAndApplyNotice(input, dependencies);
+  if (result.event) {
+    const synced = await syncTaskForEvent(dependencies, result.event, dependencies.taskContext?.courseName ?? null);
+    if (synced) return { ...result, taskId: synced.task.taskId };
+  }
+  return result;
+}
+
+// Only trusted callers supply provenance; it never comes from the browser body.
+async function resolveAndApplyNotice(input, dependencies) {
   const notice = noticeSchema.parse(input);
   if ((notice.sourceType === "manual") !== (notice.sourceRef === null)) {
     throw new IngestionError(400, "INVALID_SOURCE", "The notice source is invalid.");

@@ -82,7 +82,7 @@ Resources:
       StageName: $default
       CorsConfiguration:
         AllowOrigins: [!Ref FrontendOrigin]
-        AllowMethods: [GET, POST, PUT]
+        AllowMethods: [GET, POST, PUT, PATCH, DELETE]
         AllowHeaders: [Content-Type]
         MaxAge: 300
 
@@ -112,6 +112,7 @@ Resources:
         Variables:
           ACADEMIC_EVENTS_TABLE: !Ref AcademicEvents
           STUDENT_PROFILE_TABLE: !Ref StudentProfile
+          TASKS_TABLE: !Ref Tasks
           UPLOAD_BUCKET: !Ref UploadBucket
           AI_PROVIDER: !Ref AIProvider
           OLLAMA_BASE_URL: ''
@@ -132,6 +133,9 @@ Resources:
             - Effect: Allow
               Action: dynamodb:GetItem
               Resource: !GetAtt StudentProfile.Arn
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:PutItem]
+              Resource: !GetAtt Tasks.Arn
             - Effect: Allow
               Action: [s3:GetObject, s3:PutObject, s3:HeadObject]
               Resource: !Sub '${UploadBucket.Arn}/demo-user/*'
@@ -242,6 +246,7 @@ Resources:
           UPLOAD_BUCKET: !Ref UploadBucket
           STUDENT_PROFILE_TABLE: !Ref StudentProfile
           ACADEMIC_EVENTS_TABLE: !Ref AcademicEvents
+          TASKS_TABLE: !Ref Tasks
           AI_PROVIDER: !Ref AIProvider
           OLLAMA_BASE_URL: ''
           OLLAMA_MODEL: qwen3:8b
@@ -263,6 +268,9 @@ Resources:
             - Effect: Allow
               Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:UpdateItem, dynamodb:Query]
               Resource: !GetAtt AcademicEvents.Arn
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:PutItem]
+              Resource: !GetAtt Tasks.Arn
             - !If
               - BedrockConfigured
               - Effect: Allow
@@ -300,6 +308,18 @@ Resources:
             ApiId: !Ref CampusFlowApi
             Path: /documents/{jobId}
             Method: GET
+        TimetableSlotEdit:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CampusFlowApi
+            Path: /timetable/slots/{slotId}
+            Method: PUT
+        TimetableSlotDelete:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CampusFlowApi
+            Path: /timetable/slots/{slotId}
+            Method: DELETE
 
   ClassroomFunction:
     Type: AWS::Serverless::Function
@@ -316,9 +336,33 @@ Resources:
           GOOGLE_REDIRECT_URI: !Ref GoogleRedirectUri
           OAUTH_STATE_SECRET: !Ref OAuthStateSecret
           FRONTEND_URL: !Ref FrontendOrigin
+          ACADEMIC_EVENTS_TABLE: !Ref AcademicEvents
+          CLASSROOM_SYNC_STATE_TABLE: !Ref ClassroomSyncState
+          TASKS_TABLE: !Ref Tasks
+          AI_PROVIDER: !Ref AIProvider
+          BEDROCK_MODEL_ID: !If [BedrockConfigured, !Ref BedrockModelId, '']
+          GROQ_API_KEY: !If [GroqConfigured, !Ref GroqApiKey, '']
+          GROQ_EXTRACTION_MODEL: !Ref GroqExtractionModel
+          GROQ_REASONING_MODEL: !Ref GroqReasoningModel
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref StudentProfile
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:Query, dynamodb:GetItem, dynamodb:PutItem, dynamodb:UpdateItem]
+              Resource: !GetAtt AcademicEvents.Arn
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:PutItem]
+              Resource: !GetAtt ClassroomSyncState.Arn
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:PutItem]
+              Resource: !GetAtt Tasks.Arn
+            - !If
+              - BedrockConfigured
+              - Effect: Allow
+                Action: bedrock:InvokeModel
+                Resource: !Split [',', !Ref BedrockInvokeArns]
+              - !Ref AWS::NoValue
       Events:
         Classroom:
           Type: HttpApi
@@ -339,6 +383,7 @@ Resources:
           STUDENT_PROFILE_TABLE: !Ref StudentProfile
           ACADEMIC_EVENTS_TABLE: !Ref AcademicEvents
           CLASSROOM_SYNC_STATE_TABLE: !Ref ClassroomSyncState
+          TASKS_TABLE: !Ref Tasks
           AI_PROVIDER: !Ref AIProvider
           OLLAMA_BASE_URL: ''
           OLLAMA_MODEL: qwen3:8b
@@ -360,12 +405,106 @@ Resources:
             - Effect: Allow
               Action: [dynamodb:GetItem, dynamodb:PutItem]
               Resource: !GetAtt ClassroomSyncState.Arn
+            - Effect: Allow
+              Action: [dynamodb:Query, dynamodb:GetItem, dynamodb:PutItem]
+              Resource: !GetAtt Tasks.Arn
             - !If
               - BedrockConfigured
               - Effect: Allow
                 Action: bedrock:InvokeModel
                 Resource: !Split [',', !Ref BedrockInvokeArns]
               - !Ref AWS::NoValue
+
+  # Tasks, focus sessions, planning, dashboard, preferences, and sources.
+  # AcademicEvents and ClassroomSyncState are read-only here: the student layer
+  # can never rewrite source-backed truth.
+  StudentApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: backend/
+      Handler: handlers/student.handler
+      Description: Student-facing tasks, focus, planner, dashboard, preferences, and sources for demo-user.
+      Timeout: 28
+      MemorySize: 256
+      Environment:
+        Variables:
+          STUDENT_PROFILE_TABLE: !Ref StudentProfile
+          ACADEMIC_EVENTS_TABLE: !Ref AcademicEvents
+          CLASSROOM_SYNC_STATE_TABLE: !Ref ClassroomSyncState
+          TASKS_TABLE: !Ref Tasks
+          FOCUS_SESSIONS_TABLE: !Ref FocusSessions
+          SCHEDULE_BLOCKS_TABLE: !Ref ScheduleBlocks
+          UPLOAD_BUCKET: !Ref UploadBucket
+          DAILY_STUDY_HOURS: !Ref DailyStudyHours
+          AI_PROVIDER: !Ref AIProvider
+          BEDROCK_MODEL_ID: !If [BedrockConfigured, !Ref BedrockModelId, '']
+          GROQ_API_KEY: !If [GroqConfigured, !Ref GroqApiKey, '']
+          GROQ_EXTRACTION_MODEL: !Ref GroqExtractionModel
+          GROQ_REASONING_MODEL: !Ref GroqReasoningModel
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref Tasks
+        - DynamoDBCrudPolicy:
+            TableName: !Ref FocusSessions
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ScheduleBlocks
+        - DynamoDBReadPolicy:
+            TableName: !Ref AcademicEvents
+        - DynamoDBReadPolicy:
+            TableName: !Ref ClassroomSyncState
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:UpdateItem]
+              Resource: !GetAtt StudentProfile.Arn
+            - Effect: Allow
+              Action: [s3:GetObject, s3:PutObject, s3:DeleteObject]
+              Resource: !Sub '${UploadBucket.Arn}/demo-user/attachments/*'
+            - !If
+              - BedrockConfigured
+              - Effect: Allow
+                Action: bedrock:InvokeModel
+                Resource: !Split [',', !Ref BedrockInvokeArns]
+              - !Ref AWS::NoValue
+      Events:
+        Dashboard:
+          Type: HttpApi
+          Properties: { ApiId: !Ref CampusFlowApi, Path: /dashboard, Method: GET }
+        TasksList:
+          Type: HttpApi
+          Properties: { ApiId: !Ref CampusFlowApi, Path: /tasks, Method: GET }
+        TasksCreate:
+          Type: HttpApi
+          Properties: { ApiId: !Ref CampusFlowApi, Path: /tasks, Method: POST }
+        TaskRoutes:
+          Type: HttpApi
+          Properties: { ApiId: !Ref CampusFlowApi, Path: '/tasks/{proxy+}', Method: ANY }
+        FocusRoutes:
+          Type: HttpApi
+          Properties: { ApiId: !Ref CampusFlowApi, Path: '/focus-sessions/{proxy+}', Method: ANY }
+        PreferencesGet:
+          Type: HttpApi
+          Properties: { ApiId: !Ref CampusFlowApi, Path: /preferences, Method: GET }
+        PreferencesPut:
+          Type: HttpApi
+          Properties: { ApiId: !Ref CampusFlowApi, Path: /preferences, Method: PUT }
+        Planner:
+          Type: HttpApi
+          Properties: { ApiId: !Ref CampusFlowApi, Path: /planner, Method: GET }
+        PlannerExport:
+          Type: HttpApi
+          Properties: { ApiId: !Ref CampusFlowApi, Path: /planner/export, Method: GET }
+        Replan:
+          Type: HttpApi
+          Properties: { ApiId: !Ref CampusFlowApi, Path: /schedule/replan, Method: POST, TimeoutInMillis: 29000 }
+        BlockCreate:
+          Type: HttpApi
+          Properties: { ApiId: !Ref CampusFlowApi, Path: /schedule/blocks, Method: POST }
+        BlockDelete:
+          Type: HttpApi
+          Properties: { ApiId: !Ref CampusFlowApi, Path: '/schedule/blocks/{blockId}', Method: DELETE }
+        Sources:
+          Type: HttpApi
+          Properties: { ApiId: !Ref CampusFlowApi, Path: /sources, Method: GET }
 
   ClassroomSchedulerRole:
     Type: AWS::IAM::Role
@@ -466,6 +605,42 @@ Resources:
         - AttributeName: date
           KeyType: RANGE
 
+  Tasks:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: Tasks
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: userId
+          AttributeType: S
+        - AttributeName: taskId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: userId
+          KeyType: HASH
+        - AttributeName: taskId
+          KeyType: RANGE
+
+  FocusSessions:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: FocusSessions
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: userId
+          AttributeType: S
+        - AttributeName: sessionId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: userId
+          KeyType: HASH
+        - AttributeName: sessionId
+          KeyType: RANGE
+
   UploadBucket:
     Type: AWS::S3::Bucket
     DeletionPolicy: Retain
@@ -486,7 +661,7 @@ Resources:
       CorsConfiguration:
         CorsRules:
           - AllowedOrigins: [!Ref FrontendOrigin]
-            AllowedMethods: [POST]
+            AllowedMethods: [POST, GET]
             AllowedHeaders: ['*']
             MaxAge: 300
 
@@ -503,3 +678,7 @@ Outputs:
     Value: !Ref ScheduleBlocks
   UploadBucketName:
     Value: !Ref UploadBucket
+  TasksTable:
+    Value: !Ref Tasks
+  FocusSessionsTable:
+    Value: !Ref FocusSessions
