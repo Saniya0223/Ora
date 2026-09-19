@@ -4,7 +4,8 @@ import { usePathname } from "next/navigation";
 import { createContext, useContext, useState } from "react";
 import type { Profile, Sources } from "../lib/types";
 import { useResource } from "../lib/data";
-import { syncLabel } from "../lib/presentation";
+import { useClassroomSync } from "./classroom-sync";
+import { syncSummary, timeAgo } from "../lib/source-presentation";
 import { Icon } from "./ui";
 import { FocusProvider } from "./focus";
 import { ProfileForm } from "./planning-settings";
@@ -14,6 +15,7 @@ import {
   Settings,
   CheckSquare,
   GraduationCap,
+  RefreshCw,
   X
 } from "lucide-react";
 
@@ -78,17 +80,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
             <div className="sidebar-spacer" style={{ flex: 1 }}></div>
 
             <div className="sidebar-footer">
-              <Link
-                href="/setup#sources"
-                className={`sidebar-sync-badge ${source?.health === "HEALTHY" && source.sync.status === "SUCCESS" ? "good" : ""}`}
-              >
-                <span className="status-dot" />
-                {source
-                  ? syncLabel(source.health, source.sync.status)
-                  : sources.error
-                    ? "Status unavailable"
-                    : "Checking sync"}
-              </Link>
+              <SidebarSync source={source} unavailable={!!sources.error} />
               <button
                 onClick={() => setProfileOpen(true)}
                 className="sidebar-user"
@@ -129,5 +121,46 @@ export default function Shell({ children }: { children: React.ReactNode }) {
         )}
       </FocusProvider>
     </StudentContext.Provider>
+  );
+}
+
+// Syncing Classroom is the core action, so it is one click from every page.
+// The wording comes from the same summary as the Connected Sources card.
+function SidebarSync({ source, unavailable }: {
+  source: Sources["classroom"] | undefined;
+  unavailable: boolean;
+}) {
+  const { syncing: busy, error, sync } = useClassroomSync();
+  if (source?.connection !== "CONNECTED")
+    return (
+      <Link href="/setup#sources" className="sidebar-sync-badge">
+        <span className="status-dot" />
+        {source ? "Connect Google Classroom" : unavailable ? "Classroom status unavailable" : "Checking Classroom…"}
+      </Link>
+    );
+  const summary = busy
+    ? { tone: "busy", title: "Syncing Classroom…", detail: null, changes: [] as string[] }
+    : syncSummary(source);
+  const last = source.sync.lastSuccessfulSyncAt;
+  return (
+    <div className={`sidebar-sync ${summary.tone}`}>
+      <div className="sidebar-sync-status">
+        <span className="status-dot" />
+        <span>
+          {summary.title}
+          {summary.changes.length > 0
+            ? <small>{summary.changes.join(" · ")}</small>
+            : !busy && last && summary.tone === "ok" && <small>Last synced {timeAgo(last)}</small>}
+        </span>
+      </div>
+      {source.health !== "REAUTH_REQUIRED" ? (
+        <button className="button primary small wide" disabled={busy} onClick={() => void sync()}>
+          <RefreshCw size={13} className={busy ? "spin" : ""} /> {busy ? "Syncing…" : "Sync now"}
+        </button>
+      ) : (
+        <Link className="button primary small wide" href="/setup#sources">Reconnect</Link>
+      )}
+      {error && <small className="sidebar-sync-message" role="alert">{error}</small>}
+    </div>
   );
 }

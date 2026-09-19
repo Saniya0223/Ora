@@ -15,8 +15,8 @@ export function PlanningSettings() {
   }, [r.data]);
   return (
     <section className="card">
-      <h2>Planning Settings</h2>
-      <p className="muted">Customize your study schedule and preferences.</p>
+      <h2>Planning Preferences</h2>
+      <p className="muted">How much you study each day, and when.</p>
       <ErrorBox message={error || r.error} retry={r.refresh} />
       {r.loading && !value && <Skeleton rows={2} />}{" "}
       {value && (

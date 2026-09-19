@@ -58,8 +58,12 @@ function Tasks() {
       );
     }
   }, [selected, list.data, router]);
-  const select = (id: string) =>
+  const select = (id: string) => {
     router.replace(`/tasks?task=${encodeURIComponent(id)}`, { scroll: false });
+    // On narrow screens the detail sits below the list; bring it into view.
+    if (window.matchMedia("(max-width: 900px)").matches)
+      setTimeout(() => document.querySelector(".task-detail")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+  };
   async function toggle(t: TaskListItem) {
     setBusy(t.id);
     setError("");
@@ -92,7 +96,7 @@ function Tasks() {
           {[
             ["all", "All", "all"],
             ["upcoming", "Upcoming", "upcoming"],
-            ["high_priority", "High Priority", "highPriority"],
+            ["high_priority", "High priority", "highPriority"],
             ["completed", "Completed", "completed"],
           ].map(([v, label, key]) => (
             <button
@@ -182,7 +186,7 @@ function Tasks() {
         </div>
       )}
       <ErrorBox message={error || list.error} retry={list.refresh} />
-      <div className="tasks-grid" style={{ gap: '32px', gridTemplateColumns: '1fr 1.2fr' }}>
+      <div className="tasks-grid">
         <section
           className="task-list"
           aria-label="Tasks"
@@ -194,7 +198,7 @@ function Tasks() {
             list.data?.tasks.map((t) => (
               <article
                 key={t.id}
-                className={`task-list-item ${selected === t.id ? "selected" : ""}`}
+                className={`task-list-item ${selected === t.id ? "selected" : ""} ${t.status !== "OPEN" ? "is-done" : ""}`}
                 style={{
                   borderRadius: '16px',
                   border: selected === t.id ? '2px solid var(--olive)' : '1px solid var(--line)',
@@ -232,10 +236,12 @@ function Tasks() {
                   <p className="muted tiny" style={{ fontSize: '13px', marginTop: '8px' }}>
                     {t.status === "COMPLETED"
                       ? "Completed"
-                      : `${deadline(t.deadline, timezone)} · ${duration(t.estimatedMinutes)}`}
+                      : t.status === "CANCELLED"
+                        ? "Cancelled"
+                        : [t.deadline ? `Due ${deadline(t.deadline, timezone)}` : "No deadline", t.estimatedMinutes ? duration(t.estimatedMinutes) : null].filter(Boolean).join(" · ")}
                   </p>
                 </div>
-                <PriorityBadge task={t} />
+                {t.status === "OPEN" && <PriorityBadge task={t} />}
               </article>
             ))
           )}
@@ -250,7 +256,7 @@ function Tasks() {
               <p className="muted">
                 {q || course || type
                   ? "Try another search or clear your filters."
-                  : "Add a task or connect an academic source to get started."}
+                  : "New Classroom work will appear here after a sync."}
               </p>
             </div>
           )}
@@ -263,9 +269,8 @@ function Tasks() {
           />
         ) : (
           <section className="card task-detail" style={{ borderRadius: '20px', border: '1px solid var(--line)', boxShadow: '0 4px 20px rgba(0,0,0,0.03)' }}>
-            <Empty title="A little focus goes a long way.">
-              Select a task to see its checklist, notes, attachments, and study
-              progress.
+            <Empty title="Pick a task">
+              See what to do, what changed, and when it&rsquo;s due.
             </Empty>
           </section>
         )}

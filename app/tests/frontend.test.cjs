@@ -166,3 +166,66 @@ test("signed upload puts file last and lets browser set multipart header", async
     new File(["test"], "test.txt", { type: "text/plain" }),
   );
 });
+
+test("resource links are named by what they point to, not a vague model label", () => {
+  const { linkLabel } = sourcePresentation;
+  assert.equal(linkLabel("https://docs.google.com/forms/d/e/x/viewform", "Repo links"), "Google Form");
+  assert.equal(linkLabel("https://forms.gle/abc", null), "Google Form");
+  assert.equal(linkLabel("https://github.com/org/repo", "link"), "GitHub repository");
+  assert.equal(linkLabel("https://example.edu/syllabus", "Syllabus"), "Syllabus");
+  assert.equal(linkLabel("https://example.edu/syllabus", null), "example.edu");
+});
+
+test("sync summary speaks to students and keeps raw counters out of the headline", () => {
+  const { syncSummary, timeAgo } = sourcePresentation;
+  const now = Date.parse("2026-09-20T10:00:00Z");
+  const zero = { coursesScanned: 1, announcementsScanned: 8, courseworkScanned: 2, processed: 0, created: 0, updated: 0, cancelled: 0, ignored: 0, failed: 0, truncated: false };
+  const source = (sync, health = "HEALTHY") => ({ connection: "CONNECTED", health, account: null, selectedCourses: [], sync: { status: "SUCCESS", trigger: "manual", stale: false, lastAttemptAt: null, lastFinishedAt: null, lastSuccessfulSyncAt: "2026-09-20T09:58:00Z", lastErrorCode: null, lastResult: zero, ...sync } });
+  const upToDate = syncSummary(source({}), now);
+  assert.equal(upToDate.title, "You're up to date");
+  assert.match(upToDate.detail, /2 min ago/);
+  assert.doesNotMatch(JSON.stringify(upToDate), /0 created|ignored/);
+  const changed = syncSummary(source({ lastResult: { ...zero, created: 1, updated: 1 } }), now);
+  assert.deepEqual(changed.changes, ["1 new task added", "1 task updated"]);
+  assert.equal(syncSummary(source({ status: "SYNCING" }), now).tone, "busy");
+  assert.equal(syncSummary(source({ status: "PARTIAL", lastResult: { ...zero, needsReview: 1 } }), now).title, "1 Classroom item needs review");
+  assert.match(syncSummary(source({ status: "PARTIAL", lastResult: { ...zero, temporaryFailed: 2 } }), now).detail, /try again shortly/);
+  assert.equal(syncSummary(source({}, "REAUTH_REQUIRED"), now).tone, "error");
+  assert.equal(timeAgo("2026-09-20T09:59:40Z", now), "just now");
+});
+
+test("both Sync now buttons share one controller: one request at a time, then a refresh", async () => {
+  const { createClassroomSync } = load("../lib/classroom-sync.ts");
+  let posts = 0, refreshes = 0, release;
+  const sync = createClassroomSync(() => { posts++; return new Promise((resolve) => { release = resolve; }); }, () => { refreshes++; }, () => "Classroom couldn't be synced.");
+  const seen = [];
+  sync.subscribe(() => seen.push(sync.getState().syncing));
+  const first = sync.sync();
+  assert.equal(sync.getState().syncing, true, "enters a visible syncing state");
+  assert.equal(await sync.sync(), false, "a second click while syncing is ignored");
+  assert.equal(posts, 1, "only one sync request is sent");
+  release();
+  assert.equal(await first, true);
+  assert.equal(refreshes, 1, "sources, tasks and dashboard are refreshed afterwards");
+  assert.deepEqual(seen, [true, false]);
+  assert.deepEqual(sync.getState(), { syncing: false, error: "" });
+});
+
+test("a failed Classroom sync reports a calm error, re-enables the button and still refreshes", async () => {
+  const { createClassroomSync } = load("../lib/classroom-sync.ts");
+  let refreshes = 0;
+  const sync = createClassroomSync(() => Promise.reject(new Error("GOOGLE_UNAVAILABLE")), () => { refreshes++; }, () => "Classroom couldn't be synced right now. Try again shortly.");
+  assert.equal(await sync.sync(), false);
+  assert.deepEqual(sync.getState(), { syncing: false, error: "Classroom couldn't be synced right now. Try again shortly." });
+  assert.equal(refreshes, 1);
+});
+
+test("sync results read as student-facing outcomes", () => {
+  const { syncSummary } = sourcePresentation;
+  const zero = { coursesScanned: 1, announcementsScanned: 1, courseworkScanned: 0, processed: 1, created: 0, updated: 0, cancelled: 0, ignored: 0, failed: 0, truncated: false };
+  const src = (result, status = "SUCCESS") => ({ connection: "CONNECTED", health: "HEALTHY", account: null, selectedCourses: [], sync: { status, trigger: "manual", stale: false, lastAttemptAt: null, lastFinishedAt: null, lastSuccessfulSyncAt: null, lastErrorCode: null, lastResult: result } });
+  assert.deepEqual(syncSummary(src({ ...zero, created: 1 })).changes, ["1 new task added"]);
+  assert.deepEqual(syncSummary(src({ ...zero, updated: 1 })).changes, ["1 task updated"]);
+  assert.equal(syncSummary(src(zero)).title, "You're up to date");
+  assert.equal(syncSummary(src({ ...zero, rateLimited: true }, "PARTIAL")).title, "Some Classroom items could not be synced");
+});

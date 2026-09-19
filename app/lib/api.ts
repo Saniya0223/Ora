@@ -100,8 +100,11 @@ export async function uploadFile(
       "The file upload failed. Please retry.",
     );
 }
+const technical = /^[A-Z0-9_]+$|Exception|Error:|^\s*[{[]|\bat \w+ \(/;
+
 export function errorMessage(error: unknown) {
-  return error instanceof Error
-    ? error.message
+  const message = error instanceof Error ? error.message.trim() : "";
+  return message && !technical.test(message)
+    ? message
     : "Something went wrong. Please try again.";
 }
