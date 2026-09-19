@@ -12,7 +12,7 @@ import { IngestionError } from "./errors.js";
 const timetablePrompt = readFileSync(new URL("../prompts/timetable-normalization.txt", import.meta.url), "utf8");
 export const MAX_PDF_BYTES = 10 * 1024 * 1024;
 const jobKey = (id) => `demo-user/jobs/${z.uuid().parse(id)}.json`;
-const noObject = (error) => error.name === "NoSuchKey" || error.name === "NotFound" || error.$metadata?.httpStatusCode === 404;
+const noObject = (error) => error.name === "NoSuchKey" || error.name === "NotFound" || error.$metadata?.httpStatusCode === 404 || error.name === "AccessDenied" || error.$metadata?.httpStatusCode === 403;
 const conditionFailed = (error) => error.name === "PreconditionFailed" || error.$metadata?.httpStatusCode === 412;
 const publicJob = (job) => ({ jobId: job.jobId, kind: job.kind, status: job.status, ...(job.result ? { result: job.result } : {}), ...(job.error ? { error: job.error } : {}) });
 

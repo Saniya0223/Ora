@@ -140,7 +140,11 @@ Resources:
               Action: [s3:GetObject, s3:PutObject, s3:HeadObject]
               Resource: !Sub '${UploadBucket.Arn}/demo-user/*'
             - Effect: Allow
-              Action: [textract:StartDocumentTextDetection, textract:GetDocumentTextDetection]
+              Action:
+                - textract:StartDocumentTextDetection
+                - textract:GetDocumentTextDetection
+                - textract:StartDocumentAnalysis
+                - textract:GetDocumentAnalysis
               Resource: '*'
             - !If
               - BedrockConfigured

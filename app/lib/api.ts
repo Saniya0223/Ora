@@ -83,7 +83,8 @@ export async function uploadFile(
   Object.entries(upload.fields).forEach(([key, value]) =>
     data.append(key, value),
   );
-  data.append("file", file);
+  const pdfBlob = new Blob([file], { type: "application/pdf" });
+  data.append("file", pdfBlob, file.name);
   let result: Response;
   try {
     result = await fetch(upload.url, { method: "POST", body: data });

@@ -1,23 +1,44 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { createContext, useContext } from "react";
+import { createContext, useContext, useState } from "react";
 import type { Profile, Sources } from "../lib/types";
 import { useResource } from "../lib/data";
 import { syncLabel } from "../lib/presentation";
 import { Icon } from "./ui";
 import { FocusProvider } from "./focus";
+import { ProfileForm } from "./planning-settings";
+import {
+  CalendarDays,
+  LayoutDashboard,
+  Settings,
+  CheckSquare,
+  GraduationCap,
+  X
+} from "lucide-react";
+
 const StudentContext = createContext<{
   profile: Profile | null;
   timezone: string;
 }>({ profile: null, timezone: "Asia/Kolkata" });
+
 export const useStudent = () => useContext(StudentContext);
+
 export default function Shell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const [profileOpen, setProfileOpen] = useState(false);
   const profile = useResource<{ profile: Profile | null }>("/profile");
   const sources = useResource<Sources>("/sources");
   const p = profile.data?.profile ?? null;
   const source = sources.data?.classroom;
+
+  const navItems = [
+    { href: "/", label: "Dashboard", icon: LayoutDashboard },
+    { href: "/tasks", label: "Tasks", icon: CheckSquare },
+    { href: "/planner", label: "Planner", icon: CalendarDays },
+    { href: "/setup", label: "Add & Setup", icon: Settings },
+  ];
+
   return (
     <StudentContext.Provider
       value={{ profile: p, timezone: p?.timezone ?? "Asia/Kolkata" }}
@@ -26,38 +47,40 @@ export default function Shell({ children }: { children: React.ReactNode }) {
         <a className="skip-link" href="#main">
           Skip to content
         </a>
-        <div className="app-frame">
-          <header className="app-header">
-            <Link className="brand" href="/" aria-label="CampusFlow dashboard">
-              <span className="brand-icon">
-                <Icon name="calendar" size={25} />
-              </span>
-              <span>
+        <div className="app-layout">
+          <aside className="app-sidebar">
+            <Link className="sidebar-brand" href="/" aria-label="CampusFlow dashboard">
+              <div className="brand-icon-new">
+                <GraduationCap size={22} strokeWidth={2.5} />
+              </div>
+              <div className="brand-text">
                 <strong>CampusFlow</strong>
-                <small>STUDENT PLANNER</small>
-              </span>
+              </div>
             </Link>
-            <nav aria-label="Main navigation">
-              {[
-                ["/", "Dashboard"],
-                ["/tasks", "Tasks"],
-                ["/planner", "Planner"],
-                ["/setup", "Add & Setup"],
-              ].map(([href, label]) => (
-                <Link
-                  key={href}
-                  href={href}
-                  className={pathname === href ? "active" : ""}
-                  aria-current={pathname === href ? "page" : undefined}
-                >
-                  {label}
-                </Link>
-              ))}
+
+            <nav className="sidebar-nav" aria-label="Main navigation">
+              {navItems.map((item) => {
+                const isActive = pathname === item.href || (item.href !== "/" && pathname.startsWith(item.href));
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    className={`sidebar-nav-item ${isActive ? "active" : ""}`}
+                    aria-current={isActive ? "page" : undefined}
+                  >
+                    <item.icon size={18} strokeWidth={isActive ? 2.5 : 2} className="sidebar-nav-icon" />
+                    <span>{item.label}</span>
+                  </Link>
+                );
+              })}
             </nav>
-            <div className="header-account">
+
+            <div className="sidebar-spacer" style={{ flex: 1 }}></div>
+
+            <div className="sidebar-footer">
               <Link
                 href="/setup#sources"
-                className={`sync-badge ${source?.health === "HEALTHY" && source.sync.status === "SUCCESS" ? "good" : ""}`}
+                className={`sidebar-sync-badge ${source?.health === "HEALTHY" && source.sync.status === "SUCCESS" ? "good" : ""}`}
               >
                 <span className="status-dot" />
                 {source
@@ -66,28 +89,44 @@ export default function Shell({ children }: { children: React.ReactNode }) {
                     ? "Status unavailable"
                     : "Checking sync"}
               </Link>
-              <Link
-                href="/setup#profile"
-                className="user-menu"
+              <button
+                onClick={() => setProfileOpen(true)}
+                className="sidebar-user"
                 title="Manage student profile"
+                style={{ width: '100%', textAlign: 'left', border: 'none', background: 'transparent' }}
               >
-                <span className="avatar">
+                <div className="avatar">
                   {p?.name?.trim().slice(0, 1).toUpperCase() || (
-                    <Icon name="cap" size={17} />
+                    <GraduationCap size={16} />
                   )}
-                </span>
-                <span>{p?.name || "Your profile"}</span>
-                <span aria-hidden="true">⌄</span>
-              </Link>
+                </div>
+                <div className="user-info">
+                  <span className="user-name">{p?.name || "Your profile"}</span>
+                  <span className="user-email">{source?.account?.email || "Student"}</span>
+                </div>
+              </button>
             </div>
-          </header>
-          <main id="main" className="main-content">
-            {children}
-          </main>
-          <footer className="app-footer">
-            CampusFlow <span>Make room for what matters.</span>
-          </footer>
+          </aside>
+          
+          <div className="main-area">
+            <main id="main" className={`main-content ${pathname.startsWith('/planner') ? 'wide' : ''}`}>
+              {children}
+            </main>
+          </div>
         </div>
+        {profileOpen && (
+          <div className="modal-overlay" onClick={() => setProfileOpen(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+            <div className="modal-content" onClick={e => e.stopPropagation()} style={{ background: 'var(--paper)', borderRadius: '20px', padding: '24px', maxWidth: '600px', width: '100%', maxHeight: '90vh', overflowY: 'auto' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+                <h2 style={{ fontSize: '20px', margin: 0 }}>Student Profile</h2>
+                <button onClick={() => setProfileOpen(false)} style={{ background: 'transparent', border: 'none', cursor: 'pointer' }}>
+                  <X size={20} />
+                </button>
+              </div>
+              <ProfileForm />
+            </div>
+          </div>
+        )}
       </FocusProvider>
     </StudentContext.Provider>
   );

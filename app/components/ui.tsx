@@ -2,6 +2,27 @@
 import { useEffect, useRef } from "react";
 import Link from "next/link";
 import type { Capacity, TaskListItem } from "../lib/types";
+import {
+  Calendar,
+  Clock,
+  GraduationCap,
+  CheckSquare,
+  Search,
+  Plus,
+  Play,
+  Bookmark,
+  Edit2,
+  Upload,
+  Download,
+  RefreshCw,
+  X,
+  ChevronDown,
+  Check,
+  Filter,
+  Lightbulb,
+  Leaf
+} from "lucide-react";
+
 export function Icon({
   name = "calendar",
   size = 20,
@@ -9,65 +30,30 @@ export function Icon({
   name?: string;
   size?: number;
 }) {
-  const paths: Record<string, React.ReactNode> = {
-    calendar: (
-      <>
-        <rect x="3" y="5" width="18" height="16" rx="3" />
-        <path d="M7 3v4m10-4v4M3 10h18m-14 4h3m4 0h3m-10 4h3" />
-      </>
-    ),
-    clock: (
-      <>
-        <circle cx="12" cy="12" r="9" />
-        <path d="M12 6v6l4 2" />
-      </>
-    ),
-    cap: (
-      <>
-        <path d="m2 8 10-5 10 5-10 5-10-5Zm4 2v7l6 3 6-3v-7m4-2v8" />
-      </>
-    ),
-    task: (
-      <>
-        <rect x="5" y="5" width="14" height="16" rx="2" />
-        <path d="M9 5V3h6v2m-7 9 3 3 5-6" />
-      </>
-    ),
-    search: (
-      <>
-        <circle cx="10" cy="10" r="6" />
-        <path d="m15 15 5 5" />
-      </>
-    ),
-    plus: <path d="M12 5v14M5 12h14" />,
-    play: <path d="m8 4 12 8-12 8V4Z" />,
-    bookmark: <path d="M6 21V4h12v17l-6-4-6 4Z" />,
-    edit: <path d="m15 4 5 5M4 20l5-1L21 7l-5-5L4 14v6Z" />,
-    upload: <path d="M12 16V3m-5 5 5-5 5 5M4 15v6h16v-6" />,
-    download: <path d="M12 3v13m-5-5 5 5 5-5M4 17v4h16v-4" />,
-    refresh: <path d="M20 8a9 9 0 1 0 0 8M20 3v5h-5" />,
-    close: <path d="m6 6 12 12M6 18 18 6" />,
-    chevron: <path d="m9 5 7 7-7 7" />,
-    check: <path d="m4 12 5 5L20 6" />,
-    filter: <path d="M4 6h16M4 12h16M4 18h16M8 3v6m8 0v6m-6 0v6" />,
-    bulb: <path d="M9 18h6m-6 3h6M8 15a7 7 0 1 1 8 0v3H8v-3Z" />,
-    leaf: <path d="M19 3C3 2 3 18 12 18c7 0 7-9 7-15ZM7 21 16 8" />,
+  const icons: Record<string, React.FC<any>> = {
+    calendar: Calendar,
+    clock: Clock,
+    cap: GraduationCap,
+    task: CheckSquare,
+    search: Search,
+    plus: Plus,
+    play: Play,
+    bookmark: Bookmark,
+    edit: Edit2,
+    upload: Upload,
+    download: Download,
+    refresh: RefreshCw,
+    close: X,
+    chevron: ChevronDown,
+    check: Check,
+    filter: Filter,
+    bulb: Lightbulb,
+    leaf: Leaf,
   };
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.7"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      {paths[name] ?? paths.calendar}
-    </svg>
-  );
+
+  const IconComponent = icons[name] || Calendar;
+
+  return <IconComponent size={size} strokeWidth={2} />;
 }
 export function ErrorBox({
   message,

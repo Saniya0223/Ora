@@ -9,13 +9,14 @@ import {
   CourseChip,
   Empty,
   ErrorBox,
-  Icon,
   PriorityBadge,
   Skeleton,
 } from "../components/ui";
 import { TaskDetail } from "../components/task-detail";
 import { TaskForm, taskTypes } from "../components/task-form";
 import { useStudent } from "../components/shell";
+import { Plus, Search, Filter, Lightbulb } from "lucide-react";
+
 export default function TasksPage() {
   return (
     <Suspense fallback={<Skeleton rows={5} />}>
@@ -75,18 +76,18 @@ function Tasks() {
     }
   }
   return (
-    <>
-      <div className="page-heading between">
+    <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div className="page-heading between" style={{ marginBottom: '32px' }}>
         <div>
           <h1>Tasks</h1>
           <p>Manage your coursework and deadlines.</p>
         </div>
-        <button className="button primary" onClick={() => setCreating(true)}>
-          <Icon name="plus" size={17} />
+        <button className="button primary" onClick={() => setCreating(true)} style={{ padding: '12px 20px', fontSize: '14px' }}>
+          <Plus size={18} strokeWidth={2.5} />
           New Task
         </button>
       </div>
-      <div className="tasks-toolbar">
+      <div className="tasks-toolbar" style={{ background: 'var(--surface)', padding: '16px', borderRadius: '16px', border: '1px solid var(--line)' }}>
         <div className="pills" aria-label="Filter tasks">
           {[
             ["all", "All", "all"],
@@ -99,38 +100,41 @@ function Tasks() {
               aria-pressed={view === v}
               className={view === v ? "selected" : ""}
               onClick={() => setView(v)}
+              style={view === v ? { background: 'var(--olive)', color: 'white', borderRadius: '12px' } : { background: 'transparent', borderRadius: '12px', color: 'var(--muted)' }}
             >
               {label}{" "}
               {list.data
-                ? `(${list.data.counts[key as keyof TaskList["counts"]]})`
+                ? <span style={{ opacity: 0.7, marginLeft: '4px' }}>{list.data.counts[key as keyof TaskList["counts"]]}</span>
                 : ""}
             </button>
           ))}
         </div>
         <div className="search-controls">
-          <label className="search">
-            <Icon name="search" size={17} />
+          <label className="search" style={{ borderRadius: '12px', background: '#f5efe5', border: 'none' }}>
+            <Search size={18} />
             <input
               aria-label="Search tasks"
               maxLength={100}
               placeholder="Search tasks…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
+              style={{ fontSize: '14px' }}
             />
           </label>
           <button
-            className="icon-button bordered"
+            className={`icon-button bordered ${filters ? 'active' : ''}`}
             aria-label="Task filters"
             aria-expanded={filters}
             onClick={() => setFilters(!filters)}
+            style={{ borderRadius: '12px', background: filters ? '#e1eacb' : 'transparent', borderColor: filters ? 'transparent' : '#e4dcd1' }}
           >
-            <Icon name="filter" size={17} />
+            <Filter size={18} />
           </button>
         </div>
       </div>
       {filters && (
-        <div className="filter-panel">
-          <label>
+        <div className="filter-panel animate-in fade-in slide-in-from-top-2" style={{ background: 'var(--surface)', padding: '20px', borderRadius: '16px', border: '1px solid var(--line)', marginBottom: '20px', display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
+          <label style={{ flex: 1, minWidth: '150px' }}>
             Course
             <input
               placeholder="Course name or ID"
@@ -138,7 +142,7 @@ function Tasks() {
               onChange={(e) => setCourse(e.target.value)}
             />
           </label>
-          <label>
+          <label style={{ flex: 1, minWidth: '150px' }}>
             Type
             <select value={type} onChange={(e) => setType(e.target.value)}>
               <option value="">All types</option>
@@ -147,7 +151,7 @@ function Tasks() {
               ))}
             </select>
           </label>
-          <label>
+          <label style={{ flex: 1, minWidth: '150px' }}>
             Sort
             <select value={sort} onChange={(e) => setSort(e.target.value)}>
               <option value="priority">Priority</option>
@@ -155,7 +159,7 @@ function Tasks() {
               <option value="updated">Recently updated</option>
             </select>
           </label>
-          <label className="check-label">
+          <label className="check-label" style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', marginTop: '24px' }}>
             <input
               type="checkbox"
               checked={bookmarked}
@@ -165,6 +169,7 @@ function Tasks() {
           </label>
           <button
             className="text-button"
+            style={{ marginTop: '24px' }}
             onClick={() => {
               setCourse("");
               setType("");
@@ -177,7 +182,7 @@ function Tasks() {
         </div>
       )}
       <ErrorBox message={error || list.error} retry={list.refresh} />
-      <div className="tasks-grid">
+      <div className="tasks-grid" style={{ gap: '32px', gridTemplateColumns: '1fr 1.2fr' }}>
         <section
           className="task-list"
           aria-label="Tasks"
@@ -190,53 +195,64 @@ function Tasks() {
               <article
                 key={t.id}
                 className={`task-list-item ${selected === t.id ? "selected" : ""}`}
+                style={{
+                  borderRadius: '16px',
+                  border: selected === t.id ? '2px solid var(--olive)' : '1px solid var(--line)',
+                  padding: '20px',
+                  transition: 'all 0.2s ease',
+                  cursor: 'pointer',
+                  boxShadow: selected === t.id ? '0 4px 12px rgba(82, 99, 59, 0.08)' : 'none'
+                }}
+                onClick={() => select(t.id)}
               >
-                <input
-                  type="checkbox"
-                  aria-label={`Mark ${t.title} ${t.status === "COMPLETED" ? "open" : "complete"}`}
-                  checked={t.status === "COMPLETED"}
-                  disabled={
-                    busy === t.id ||
-                    t.status === "CANCELLED" ||
-                    t.sourceStatus === "CANCELLED"
-                  }
-                  onChange={() => void toggle(t)}
-                />
-                <button
-                  className="task-select"
-                  onClick={() => select(t.id)}
-                  aria-pressed={selected === t.id}
-                >
+                <div onClick={(e) => e.stopPropagation()}>
+                  <input
+                    type="checkbox"
+                    aria-label={`Mark ${t.title} ${t.status === "COMPLETED" ? "open" : "complete"}`}
+                    checked={t.status === "COMPLETED"}
+                    disabled={
+                      busy === t.id ||
+                      t.status === "CANCELLED" ||
+                      t.sourceStatus === "CANCELLED"
+                    }
+                    onChange={() => void toggle(t)}
+                    style={{ width: '20px', height: '20px' }}
+                  />
+                </div>
+                <div className="task-select" style={{ cursor: 'pointer' }}>
                   <div className="task-line">
                     <CourseChip task={t} />
                     <strong
                       className={t.status === "COMPLETED" ? "completed" : ""}
+                      style={{ fontSize: '15px' }}
                     >
                       {t.title}
                     </strong>
                   </div>
-                  <p className="muted tiny">
+                  <p className="muted tiny" style={{ fontSize: '13px', marginTop: '8px' }}>
                     {t.status === "COMPLETED"
                       ? "Completed"
                       : `${deadline(t.deadline, timezone)} · ${duration(t.estimatedMinutes)}`}
                   </p>
-                </button>
+                </div>
                 <PriorityBadge task={t} />
               </article>
             ))
           )}
           {!list.loading && list.data?.tasks.length === 0 && (
-            <Empty
-              title={
-                q || course || type
+            <div style={{ background: 'var(--surface)', padding: '40px 20px', borderRadius: '16px', border: '1px solid var(--line)', textAlign: 'center' }}>
+              <Lightbulb size={32} color="var(--olive)" style={{ margin: '0 auto 16px' }} />
+              <h3 style={{ marginBottom: '8px', color: 'var(--olive)' }}>
+                {q || course || type
                   ? "No matching tasks."
-                  : "You’re all caught up."
-              }
-            >
-              {q || course || type
-                ? "Try another search or clear your filters."
-                : "Add a task or connect an academic source to get started."}
-            </Empty>
+                  : "You’re all caught up."}
+              </h3>
+              <p className="muted">
+                {q || course || type
+                  ? "Try another search or clear your filters."
+                  : "Add a task or connect an academic source to get started."}
+              </p>
+            </div>
           )}
         </section>
         {selected ? (
@@ -246,7 +262,7 @@ function Tasks() {
             onDeleted={() => router.replace("/tasks")}
           />
         ) : (
-          <section className="card task-detail">
+          <section className="card task-detail" style={{ borderRadius: '20px', border: '1px solid var(--line)', boxShadow: '0 4px 20px rgba(0,0,0,0.03)' }}>
             <Empty title="A little focus goes a long way.">
               Select a task to see its checklist, notes, attachments, and study
               progress.
@@ -260,6 +276,6 @@ function Tasks() {
           onSaved={(t) => select(t.id)}
         />
       )}
-    </>
+    </div>
   );
 }
