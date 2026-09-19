@@ -8,6 +8,7 @@ import { allocateWork, detectCollisions, expandTimetable, scoreEvents } from "..
 import { campusDateTime } from "../lib/time.js";
 
 const prompt = readFileSync(new URL("../prompts/conflict-narrative.txt", import.meta.url), "utf8");
+const LEGACY_DAY = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/;
 const response = (statusCode, value) => ({ statusCode, headers: { "content-type": "application/json", "cache-control": "no-store" }, body: JSON.stringify(value) });
 
 export async function buildTimeline({ db, bedrock, ai, env, now = () => new Date() }) {
@@ -71,7 +72,10 @@ export async function buildTimeline({ db, bedrock, ai, env, now = () => new Date
   let cursor;
   do {
     const page = await db.send(new QueryCommand({ TableName: env.SCHEDULE_BLOCKS_TABLE, KeyConditionExpression: "userId = :user", ExpressionAttributeValues: { ":user": DEMO_USER_ID }, ...(cursor ? { ExclusiveStartKey: cursor } : {}) }));
-    for (const old of page.Items ?? []) if (!days.some((day) => day.date === old.date)) requests.push({ DeleteRequest: { Key: { userId: DEMO_USER_ID, date: old.date } } });
+    // Only legacy one-row-per-day documents (date = YYYY-MM-DD) belong to this
+    // endpoint. Planner blocks share the table under BLOCK# keys and are never
+    // touched here.
+    for (const old of page.Items ?? []) if (LEGACY_DAY.test(old.date) && !days.some((day) => day.date === old.date)) requests.push({ DeleteRequest: { Key: { userId: DEMO_USER_ID, date: old.date } } });
     cursor = page.LastEvaluatedKey;
   } while (cursor);
   for (let index = 0; index < requests.length; index += 25) {
