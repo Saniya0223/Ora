@@ -66,7 +66,8 @@ export async function handleRequest(request, { db, bedrock, s3, textract, env = 
       return json(504, { error: { code: "TIMEOUT", message: "The result could not be confirmed in time. Refresh your events before retrying." } });
     }
     // Never log request bodies, model output, profile data, or SDK error messages.
-    console.error(JSON.stringify({ code: "NOTICE_SERVICE_ERROR", requestId: request.requestContext?.requestId }));
+    // The error class and HTTP status (e.g. "AccessDenied", 403) are safe to log.
+    console.error(JSON.stringify({ code: "NOTICE_SERVICE_ERROR", requestId: request.requestContext?.requestId, errorName: error?.name ?? null, httpStatus: error?.$metadata?.httpStatusCode ?? null, step: error?.step ?? null }));
     return json(503, { error: { code: "SERVICE_UNAVAILABLE", message: "The notice service is temporarily unavailable. Your text has been kept so you can retry." } });
   }
 }

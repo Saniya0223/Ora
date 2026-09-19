@@ -39,26 +39,29 @@ async function writeJob(job, dependencies, condition) {
   return dependencies.s3.send(new PutObjectCommand({ Bucket: dependencies.bucket, Key: jobKey(job.jobId), Body: JSON.stringify(job), ContentType: "application/json", ...condition }));
 }
 
+// Tags a failure with the step it happened in, for safe diagnostics.
+const at = (step) => (error) => { error.step ??= step; throw error; };
+
 export async function startDocument({ s3Key, kind }, dependencies) {
   const match = /^demo-user\/uploads\/([0-9a-f-]{36})\.pdf$/.exec(s3Key ?? "");
   if (!match || !z.uuid().safeParse(match[1]).success || !["notice", "timetable"].includes(kind)) throw new IngestionError(400, "INVALID_UPLOAD", "Use a PDF uploaded through CampusFlow.");
   const id = match[1];
-  const existing = await readJob(id, dependencies);
+  const existing = await readJob(id, dependencies).catch(at("read-job"));
   if (existing) {
     if (existing.job.kind !== kind) throw new IngestionError(409, "UPLOAD_ALREADY_USED", "This upload was already used for a different import. Upload the file again.");
     return publicJob(existing.job);
   }
   const { s3, bucket, textract } = dependencies;
-  const object = await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: s3Key }));
+  const object = await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: s3Key })).catch(at("head-upload"));
   if (object.ContentType !== "application/pdf" || !object.ContentLength || object.ContentLength > MAX_PDF_BYTES) throw new IngestionError(400, "INVALID_PDF", "Choose a PDF file no larger than 10 MB.");
-  const beginning = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: s3Key, VersionId: object.VersionId, Range: "bytes=0-4" }));
+  const beginning = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: s3Key, VersionId: object.VersionId, Range: "bytes=0-4" })).catch(at("read-upload"));
   if (await beginning.Body.transformToString() !== "%PDF-") throw new IngestionError(400, "INVALID_PDF", "The uploaded file is not a PDF.");
   const token = createHash("sha256").update(JSON.stringify([s3Key, kind, object.VersionId, object.ETag])).digest("hex");
   const parameters = { DocumentLocation: { S3Object: { Bucket: bucket, Name: s3Key, ...(object.VersionId ? { Version: object.VersionId } : {}) } }, ClientRequestToken: token };
-  const started = await textract.send(kind === "timetable" ? new StartDocumentAnalysisCommand({ ...parameters, FeatureTypes: ["TABLES"] }) : new StartDocumentTextDetectionCommand(parameters));
+  const started = await textract.send(kind === "timetable" ? new StartDocumentAnalysisCommand({ ...parameters, FeatureTypes: ["TABLES"] }) : new StartDocumentTextDetectionCommand(parameters)).catch(at("textract-start"));
   const job = { jobId: id, s3Key, kind, textractJobId: started.JobId, status: "PROCESSING", createdAt: new Date().toISOString() };
   try { await writeJob(job, dependencies, { IfNoneMatch: "*" }); }
-  catch (error) { if (!conditionFailed(error)) throw error; return publicJob((await readJob(id, dependencies)).job); }
+  catch (error) { if (!conditionFailed(error)) at("write-job")(error); return publicJob((await readJob(id, dependencies)).job); }
   return publicJob(job);
 }
 
