@@ -37,7 +37,13 @@ export class AIProvider {
       const system = attempt === 0
         ? request.system
         : `${request.system}\nYour previous response was invalid. Return only one JSON value that exactly matches the contract in the prompt, with no commentary.`;
-      const text = await this.generate({ ...request, system });
+      let text;
+      try { text = await this.generate({ ...request, system }); }
+      catch (error) {
+        // A provider-side rejection of malformed output gets the same single repair attempt.
+        if (error instanceof AIProviderError && error.code === "INVALID_RESPONSE") { parseError = error; continue; }
+        throw error;
+      }
       try { return parseAIResponse(text, schema); }
       catch (error) { parseError = error; }
     }
@@ -83,18 +89,59 @@ export class BedrockProvider extends AIProvider {
   }
 }
 
-async function fetchJSON(fetchImpl, url, init, provider, timeoutMs) {
-  for (let attempt = 0; attempt < 2; attempt++) {
+// Bounded rate-limit handling: a 429 waits as the provider asks (Retry-After,
+// or Groq's token-reset header), else backs off exponentially, and gives up
+// after a fixed number of retries and a fixed total wait. Never unbounded.
+export const RATE_LIMIT_POLICY = { maxRetries: 3, baseDelayMs: 1000, maxDelayMs: 10_000, maxTotalWaitMs: 20_000 };
+
+// "7.66s", "1m2.5s", "250ms", or a bare number of seconds.
+export function parseResetDuration(value) {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const text = value.trim();
+  if (/^\d+(\.\d+)?$/.test(text)) return Math.round(Number(text) * 1000);
+  const match = /^(?:(\d+(?:\.\d+)?)h)?(?:(\d+(?:\.\d+)?)m(?!s))?(?:(\d+(?:\.\d+)?)s)?(?:(\d+(?:\.\d+)?)ms)?$/.exec(text);
+  if (!match || !match.slice(1).some(Boolean)) return null;
+  const [, h = 0, m = 0, s = 0, ms = 0] = match;
+  return Math.round(Number(h) * 3_600_000 + Number(m) * 60_000 + Number(s) * 1000 + Number(ms));
+}
+
+function rateLimitDelay(response, retry, policy) {
+  const header = (name) => (typeof response.headers?.get === "function" ? response.headers.get(name) : null);
+  const asked = parseResetDuration(header("retry-after")) ?? parseResetDuration(header("x-ratelimit-reset-tokens"));
+  return Math.min(policy.maxDelayMs, asked ?? policy.baseDelayMs * 2 ** retry);
+}
+
+async function fetchJSON(fetchImpl, url, init, provider, timeoutMs, { sleepImpl = sleep, policy = RATE_LIMIT_POLICY } = {}) {
+  let transientRetried = false;
+  let rateRetries = 0;
+  let waited = 0;
+  for (;;) {
     try {
       const response = await fetchImpl(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+      if (response.status === 429) {
+        const delay = rateLimitDelay(response, rateRetries, policy);
+        if (rateRetries < policy.maxRetries && waited + delay <= policy.maxTotalWaitMs) {
+          rateRetries++;
+          waited += delay;
+          await sleepImpl(delay);
+          continue;
+        }
+        throw new AIProviderError("RATE_LIMITED", `${provider} is rate limiting requests.`, { provider, unavailable: true });
+      }
       if (!response.ok) {
-        if (retryableStatus(response.status) && attempt === 0) { await sleep(150); continue; }
+        // Groq's JSON mode rejects output that is not valid JSON with a 400:
+        // that is a malformed answer, not an outage.
+        if (response.status === 400) {
+          const body = await response.json().catch(() => null);
+          if (body?.error?.code === "json_validate_failed") throw new AIProviderError("INVALID_RESPONSE", `${provider} returned malformed JSON.`, { provider });
+        }
+        if (retryableStatus(response.status) && !transientRetried) { transientRetried = true; await sleepImpl(150); continue; }
         throw new AIProviderError("PROVIDER_UNAVAILABLE", `${provider} returned HTTP ${response.status}.`, { provider, unavailable: true });
       }
       return await response.json();
     } catch (error) {
       if (error instanceof AIProviderError) throw error;
-      if (attempt === 0) { await sleep(150); continue; }
+      if (!transientRetried) { transientRetried = true; await sleepImpl(150); continue; }
       const timeout = error?.name === "AbortError" || error?.name === "TimeoutError";
       throw new AIProviderError(timeout ? "TIMEOUT" : "PROVIDER_UNAVAILABLE", `${provider} is unavailable.`, { provider, unavailable: true, cause: error });
     }
@@ -106,7 +153,7 @@ async function fetchJSON(fetchImpl, url, init, provider, timeoutMs) {
 // is selected only by an explicit `tier: "reasoning"` request, so routine
 // syncing never pays for the larger model.
 export class GroqProvider extends AIProvider {
-  constructor({ apiKey, extractionModel = DEFAULT_GROQ_EXTRACTION_MODEL, reasoningModel = DEFAULT_GROQ_REASONING_MODEL, reasoningEffort = "low", baseUrl = DEFAULT_GROQ_URL, fetchImpl = globalThis.fetch } = {}) {
+  constructor({ apiKey, extractionModel = DEFAULT_GROQ_EXTRACTION_MODEL, reasoningModel = DEFAULT_GROQ_REASONING_MODEL, reasoningEffort = "low", baseUrl = DEFAULT_GROQ_URL, fetchImpl = globalThis.fetch, sleepImpl = sleep, rateLimitPolicy = RATE_LIMIT_POLICY } = {}) {
     super("groq");
     if (!apiKey) throw new AIProviderError("NOT_CONFIGURED", "Groq requires GROQ_API_KEY.", { provider: this.name });
     if (typeof fetchImpl !== "function") throw new AIProviderError("NOT_CONFIGURED", "Groq requires fetch support.", { provider: this.name });
@@ -116,6 +163,7 @@ export class GroqProvider extends AIProvider {
     this.reasoningEffort = reasoningEffort;
     this.baseUrl = baseUrl.replace(new RegExp("/+$"), "");
     this.fetchImpl = fetchImpl;
+    this.retry = { sleepImpl, policy: rateLimitPolicy };
   }
 
   modelFor(tier) { return tier === "reasoning" ? this.reasoningModel : this.extractionModel; }
@@ -133,7 +181,7 @@ export class GroqProvider extends AIProvider {
         response_format: { type: "json_object" },
         stream: false,
       }),
-    }, this.name, timeoutMs);
+    }, this.name, timeoutMs, this.retry);
     const choice = result.choices?.[0];
     const content = choice?.message?.content;
     if (typeof content !== "string" || !content.trim() || choice.finish_reason === "length") {

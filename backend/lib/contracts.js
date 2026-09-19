@@ -41,17 +41,29 @@ export const planningPreferencesSchema = z.strictObject({
   path: ["preferredStudyEnd"],
 });
 
+const count = z.number().int().nonnegative();
+
+// Why items were ignored. `ignored` stays the sum, for existing readers.
+// modelIgnored: the model found nothing trackable. alreadyProcessed: this exact
+// source was ingested before. duplicate: an equal item already existed.
+// noChange: an UPDATE carried nothing new.
+export const IGNORE_REASONS = ["modelIgnored", "alreadyProcessed", "duplicate", "noChange"];
+export const ignoredReasonsSchema = z.strictObject(Object.fromEntries(IGNORE_REASONS.map((reason) => [reason, count])));
+
 export const syncResultSchema = z.strictObject({
-  coursesScanned: z.number().int().nonnegative(),
-  announcementsScanned: z.number().int().nonnegative(),
-  courseworkScanned: z.number().int().nonnegative(),
-  processed: z.number().int().nonnegative(),
-  created: z.number().int().nonnegative(),
-  updated: z.number().int().nonnegative(),
-  cancelled: z.number().int().nonnegative(),
-  ignored: z.number().int().nonnegative(),
-  failed: z.number().int().nonnegative(),
+  coursesScanned: count,
+  announcementsScanned: count,
+  courseworkScanned: count,
+  processed: count,
+  created: count,
+  updated: count,
+  cancelled: count,
+  ignored: count,
+  failed: count,
   truncated: z.boolean(),
+  // Optional so sync results stored before these existed still parse.
+  ignoredReasons: ignoredReasonsSchema.optional(),
+  rateLimited: z.boolean().optional(),
 });
 
 export const classroomSyncStatusSchema = z.strictObject({
@@ -104,12 +116,42 @@ export const studentProfileSchema = z.strictObject({
   planningState: z.looseObject({}).optional(),
 });
 
+const shortText = (max) => z.string().trim().min(1).max(max);
+const textList = z.array(shortText(300)).max(10);
+
+// Structured, source-supported detail for one obligation. Every field has a
+// default, so partial model output and rows stored before this existed parse.
+export const eventDetailsSchema = z.strictObject({
+  actionSummary: shortText(300).nullable().default(null),
+  instructions: textList.default([]),
+  requirements: textList.default([]),
+  topics: textList.default([]),
+  submissionMethod: shortText(200).nullable().default(null),
+  links: z.array(z.strictObject({ label: shortText(100).nullable().default(null), url: z.url({ protocol: /^https?$/ }).max(2000) })).max(5).default([]),
+  // A tentative item has no hard deadline; its possible date is kept apart.
+  certainty: z.enum(["confirmed", "tentative"]).default("confirmed"),
+  tentativeDeadline: z.iso.datetime({ offset: true }).nullable().default(null),
+  // The source's own words for the date, e.g. "tomorrow 6 PM".
+  deadlineText: shortText(120).nullable().default(null),
+});
+
+// Provenance of a source-derived item. One notice may yield several items; each
+// keeps the notice identity and its position so replays never duplicate it.
+export const eventSourceMetaSchema = z.strictObject({
+  noticeId: z.uuid(),
+  itemIndex: z.number().int().nonnegative(),
+  itemCount: z.number().int().positive(),
+  postedAt: timestamp.nullable(),
+  updatedAt: timestamp.nullable(),
+});
+
 export const academicEventSchema = z.strictObject({
   userId: identifier,
   eventId: z.uuid(),
   title: z.string().min(1),
   type: eventType,
-  currentDeadline: z.iso.datetime({ local: true, offset: true }),
+  // null when the source states no date, or only a tentative one.
+  currentDeadline: z.iso.datetime({ local: true, offset: true }).nullable(),
   venue: z.string().nullable(),
   estimatedHours: hours,
   status: z.enum(["ACTIVE", "CANCELLED", "DONE"]),
@@ -118,6 +160,9 @@ export const academicEventSchema = z.strictObject({
   // The specified urgency formula can exceed 1 for overdue events.
   priorityScore: z.number().nonnegative(),
   changeHistory: z.array(z.string()),
+  // Optional: absent on events stored before structured details existed.
+  details: eventDetailsSchema.optional(),
+  sourceMeta: eventSourceMetaSchema.optional(),
 });
 
 export const classroomSyncStateSchema = z.strictObject({
@@ -173,6 +218,83 @@ export const truthResolutionSchema = z.strictObject({
       message: needsTarget ? "UPDATE and CANCEL require a target" : "CREATE and IGNORE require a null target",
     });
   }
+});
+
+// Truth Resolution v2: one notice resolves to 0..N items. The shape is lenient
+// (unknown keys are dropped, lengths are capped later) so a harmless model
+// quirk never costs a second call; the semantics stay strict. Ingestion
+// sanitizes every value before anything is stored.
+export const MODEL_IGNORE_REASONS = ["no_student_action", "not_applicable", "no_new_information", "informational", "uncertain"];
+const looseText = z.string().nullable().default(null);
+const looseList = z.array(z.string()).default([]);
+const batchDetails = z.object({
+  title: z.string().trim().min(1),
+  type: eventType,
+  currentDeadline: localDeadline.nullable().default(null),
+  deadlineText: looseText,
+  certainty: z.enum(["confirmed", "tentative"]).default("confirmed"),
+  venue: looseText,
+  estimatedHours: hours.default(0),
+  actionSummary: looseText,
+  instructions: looseList,
+  requirements: looseList,
+  topics: looseList,
+  submissionMethod: looseText,
+  links: z.array(z.object({ label: looseText, url: z.string() })).default([]),
+});
+const isRecord = (value) => Boolean(value) && typeof value === "object" && !Array.isArray(value);
+// v2 answers put the detail fields directly on each result: GPT-OSS 20B at low
+// reasoning effort reliably mis-closes a nested details object. Nested
+// `eventDetails` (v1 and early v2) is still accepted.
+const unflatten = (value) => {
+  if (!isRecord(value) || "eventDetails" in value || !("title" in value)) return value;
+  const { action, targetEventId, changeSummary, ...eventDetails } = value;
+  return { action, targetEventId, changeSummary, eventDetails };
+};
+const batchItem = z.preprocess(unflatten, z.object({
+  action: z.enum(["CREATE", "UPDATE", "CANCEL", "IGNORE"]),
+  targetEventId: identifier.nullable().default(null),
+  // Validated per action below: CANCEL and IGNORE may carry anything or nothing.
+  eventDetails: z.unknown().optional(),
+  changeSummary: z.string().default(""),
+})).superRefine((item, context) => {
+  // CANCEL reads nothing but its target, so it may omit details.
+  if ((item.action === "CREATE" || item.action === "UPDATE") && !batchDetails.safeParse(item.eventDetails).success) {
+    context.addIssue({ code: "custom", path: ["eventDetails"], message: "CREATE and UPDATE require event details" });
+  }
+  const needsTarget = item.action === "UPDATE" || item.action === "CANCEL";
+  if (needsTarget && item.targetEventId === null) {
+    context.addIssue({ code: "custom", path: ["targetEventId"], message: "UPDATE and CANCEL require a target" });
+  }
+  if (item.action === "CREATE" && item.targetEventId !== null) {
+    context.addIssue({ code: "custom", path: ["targetEventId"], message: "CREATE requires a null target" });
+  }
+});
+const ignoreReason = (value) => (MODEL_IGNORE_REASONS.includes(value) ? value : "unspecified");
+
+// Accepts the v2 `{ results, ignoreReason }` shape and the original
+// single-result shape, and normalizes both to `{ results, ignoreReason }`.
+// IGNORE entries are dropped: an empty result list is how a notice is ignored.
+// A stray non-object entry (a mis-closed key) is dropped when complete items
+// survive it. If nothing would survive, the answer is invalid: a broken answer
+// is never read as "nothing to track".
+const resultList = z.array(z.unknown()).max(10).transform((entries, context) => {
+  const records = entries.filter(isRecord);
+  if (entries.length && !records.length) context.addIssue({ code: "custom", message: "results contains no result objects" });
+  return records;
+}).pipe(z.array(batchItem));
+
+export const truthResolutionBatchSchema = z.union([
+  z.object({ results: resultList, ignoreReason: z.string().nullable().optional() }),
+  batchItem,
+]).transform((value) => {
+  const items = "results" in value ? value.results : [value];
+  const results = items.filter((item) => item.action !== "IGNORE").map((item) => ({
+    ...item,
+    targetEventId: item.action === "CREATE" ? null : item.targetEventId,
+    eventDetails: item.action === "CANCEL" ? null : batchDetails.parse(item.eventDetails),
+  }));
+  return { results, ignoreReason: results.length ? null : ignoreReason(value.ignoreReason ?? null) };
 });
 
 export const conflictNarrativeSchema = z.strictObject({

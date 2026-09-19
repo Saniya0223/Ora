@@ -85,13 +85,45 @@ const courseworkDeadline = (item) => {
   if (!item.dueTime) return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}T23:59`;
   return campusDateTime(Date.UTC(year, month - 1, day, item.dueTime.hours ?? 0, item.dueTime.minutes ?? 0));
 };
-export function classroomText(course, item, kind) {
-  if (kind === "coursework") return `[Classroom] ${safe(course.name)}: Coursework '${safe(item.title)}'${item.description ? ` — ${safe(item.description)}` : ""}; due ${courseworkDeadline(item)}.`;
-  return `[Classroom] ${safe(course.name)}: Announcement '${safe(item.text)}'.`;
+// Attached forms, sheets, files, and links are often where the work happens,
+// so their titles and URLs travel with the text.
+function materialsText(item) {
+  const entries = (item.materials ?? []).map((material) => {
+    if (material.form) return ["Form", material.form.title, material.form.formUrl];
+    if (material.link) return ["Link", material.link.title, material.link.url];
+    if (material.driveFile?.driveFile) return ["File", material.driveFile.driveFile.title, material.driveFile.driveFile.alternateLink];
+    if (material.youtubeVideo) return ["Video", material.youtubeVideo.title, material.youtubeVideo.alternateLink];
+    return null;
+  }).filter((entry) => entry && entry[2]).slice(0, 10);
+  return entries.length ? ` Materials: ${entries.map(([kind, title, url]) => `${kind}${title ? ` '${safe(title)}'` : ""} ${safe(url)}`).join("; ")}.` : "";
 }
 
-export const emptySyncResult = () => ({ coursesScanned: 0, announcementsScanned: 0, courseworkScanned: 0, processed: 0, created: 0, updated: 0, cancelled: 0, ignored: 0, failed: 0, truncated: false });
+export function classroomText(course, item, kind) {
+  if (kind === "coursework") return `[Classroom] ${safe(course.name)}: Coursework '${safe(item.title)}'${item.description ? ` — ${safe(item.description)}` : ""}; due ${courseworkDeadline(item)}.${materialsText(item)}`;
+  return `[Classroom] ${safe(course.name)}: Announcement '${safe(item.text)}'.${materialsText(item)}`;
+}
+
+const validTime = (value) => (typeof value === "string" && Number.isFinite(Date.parse(value)) ? new Date(value).toISOString() : null);
+
+export const emptySyncResult = () => ({
+  coursesScanned: 0, announcementsScanned: 0, courseworkScanned: 0, processed: 0, created: 0, updated: 0, cancelled: 0, ignored: 0, failed: 0, truncated: false,
+  ignoredReasons: { modelIgnored: 0, alreadyProcessed: 0, duplicate: 0, noChange: 0 },
+  rateLimited: false,
+});
 const ACTION_COUNTER = { CREATE: "created", UPDATE: "updated", CANCEL: "cancelled", IGNORE: "ignored" };
+
+// One source item may yield several results; each is counted, and every
+// ignore carries its reason.
+function count(result, outcome) {
+  for (const item of outcome.results ?? [outcome]) {
+    if (!ACTION_COUNTER[item.action]) continue;
+    result[ACTION_COUNTER[item.action]]++;
+    if (item.action === "IGNORE") {
+      const reason = item.reason in result.ignoredReasons ? item.reason : "modelIgnored";
+      result.ignoredReasons[reason]++;
+    }
+  }
+}
 
 // budgetMs bounds how long the run may keep starting new items. A truncated
 // course keeps its watermark, so the next run resumes it; ingestion is
@@ -102,7 +134,7 @@ export async function syncClassroom({ db, ai, bedrock, env, Classroom = classroo
   const result = emptySyncResult();
   const outOfTime = () => Date.now() - startedAt > budgetMs;
   for (const courseId of current.connectedCourses) {
-    if (outOfTime()) { result.truncated = true; break; }
+    if (outOfTime() || result.rateLimited) { result.truncated = true; break; }
     const sync = await db.send(new GetCommand({ TableName: env.CLASSROOM_SYNC_STATE_TABLE, Key: { userId: DEMO_USER_ID, courseId }, ConsistentRead: true }));
     const floor = sync.Item?.lastSyncedAt;
     const course = (await api.courses.get({ id: courseId })).data;
@@ -120,21 +152,32 @@ export async function syncClassroom({ db, ai, bedrock, env, Classroom = classroo
     ].filter(({ item }) => !floor || Date.parse(item.updateTime) > Date.parse(floor)).sort((a, b) => Date.parse(a.item.updateTime) - Date.parse(b.item.updateTime));
     // One unparseable announcement must not abandon the rest of the course.
     // ingestNotice is idempotent per source item (UUID v5 over the notice text),
-    // so replaying a course after a failure cannot duplicate an event.
+    // so replaying a course after a failure cannot duplicate an event. Items
+    // run one at a time: the model call is the rate-limited resource.
     let courseFailed = false;
     let courseTruncated = false;
     for (const { item, kind } of items) {
       if (outOfTime()) { courseTruncated = true; result.truncated = true; break; }
       const sourceRef = `${courseId}:${kind}:${item.id}`;
       try {
-        const outcome = await ingestNotice({ text: classroomText(course, item, kind), sourceType: "classroom", sourceRef }, { db, ai, bedrock, env, tableName: env.ACADEMIC_EVENTS_TABLE, profileTableName: env.STUDENT_PROFILE_TABLE, modelId: env.BEDROCK_MODEL_ID, now, taskContext: { courseName } });
+        const outcome = await ingestNotice({
+          text: classroomText(course, item, kind), sourceType: "classroom", sourceRef,
+          postedAt: validTime(item.creationTime), updatedAt: validTime(item.updateTime),
+        }, { db, ai, bedrock, env, tableName: env.ACADEMIC_EVENTS_TABLE, profileTableName: env.STUDENT_PROFILE_TABLE, modelId: env.BEDROCK_MODEL_ID, now, taskContext: { courseName } });
         result.processed++;
-        if (ACTION_COUNTER[outcome.action]) result[ACTION_COUNTER[outcome.action]]++;
+        count(result, outcome);
+        // Some items of the post failed: keep the watermark so a replay, which
+        // skips what already landed, fills the gap.
+        if (outcome.partial) { result.failed++; courseFailed = true; }
       } catch (error) {
         result.failed++;
         courseFailed = true;
         // Never log notice text, model output, or credentials: codes only.
         console.error(JSON.stringify({ code: "CLASSROOM_ITEM_FAILED", courseId, kind, itemId: item.id, reason: error?.code ?? error?.name ?? "UNKNOWN" }));
+        // Groq is still limiting after bounded retries: stop this run instead
+        // of failing every remaining item. Watermarks hold, so the next run
+        // resumes exactly here.
+        if (error?.code === "RATE_LIMITED") { result.rateLimited = true; courseTruncated = true; result.truncated = true; break; }
       }
     }
     // The watermark only advances after a clean, complete pass of this course,

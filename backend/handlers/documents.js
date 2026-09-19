@@ -103,7 +103,8 @@ export async function handleDocuments(request, dependencies) {
     return json(404, { error: { code: "NOT_FOUND", message: "This endpoint does not exist." } });
   } catch (error) {
     if (error instanceof IngestionError) return json(error.statusCode, { error: { code: error.code, message: error.message } });
-    console.error(JSON.stringify({ code: "DOCUMENT_ERROR", requestId: request.requestContext?.requestId }));
+    // The error class and HTTP status (e.g. "AccessDenied", 403) are safe to log; messages are not.
+    console.error(JSON.stringify({ code: "DOCUMENT_ERROR", requestId: request.requestContext?.requestId, errorName: error?.name ?? null, httpStatus: error?.$metadata?.httpStatusCode ?? null, step: error?.step ?? null }));
     return json(503, { error: { code: "DOCUMENT_UNAVAILABLE", message: "The document service is unavailable. Please retry." } });
   }
 }

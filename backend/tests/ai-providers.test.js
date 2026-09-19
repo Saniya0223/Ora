@@ -7,6 +7,7 @@ import {
   OllamaProvider,
   createAIProvider,
   isAIConfigured,
+  parseResetDuration,
 } from "../lib/ai-providers.js";
 import { truthResolutionSchema } from "../lib/contracts.js";
 
@@ -114,6 +115,64 @@ test("a Groq outage fails safely without leaking the API key", async () => {
       && error.unavailable
       && !JSON.stringify(error.message).includes("super-secret-key"),
   );
+});
+
+test("Groq 429s wait as asked, back off exponentially, and stop at a fixed bound", async () => {
+  const limited = (headers = {}) => ({ ok: false, status: 429, headers: new Headers(headers), json: async () => ({}) });
+  const ok = jsonResponse({ choices: [{ finish_reason: "stop", message: { content: JSON.stringify(truth) } }] });
+
+  // Retry-After (seconds) wins, then Groq's token-reset header, then backoff.
+  let waits = [];
+  let responses = [limited({ "retry-after": "2" }), limited({ "x-ratelimit-reset-tokens": "1.5s" }), limited(), ok];
+  let provider = new GroqProvider({ apiKey: "k", sleepImpl: async (ms) => { waits.push(ms); }, fetchImpl: async () => responses.shift() });
+  assert.deepEqual(await provider.generateStructured({ system: "s", prompt: "p", maxTokens: 10 }, truthResolutionSchema), truth);
+  assert.deepEqual(waits, [2000, 1500, 4000]);
+
+  // Never unbounded: after the retry budget it fails with a distinct code.
+  waits = [];
+  let calls = 0;
+  provider = new GroqProvider({ apiKey: "k", sleepImpl: async (ms) => { waits.push(ms); }, fetchImpl: async () => { calls++; return limited(); } });
+  await assert.rejects(
+    () => provider.generateStructured({ system: "s", prompt: "p", maxTokens: 10 }, truthResolutionSchema),
+    (error) => error instanceof AIProviderError && error.code === "RATE_LIMITED" && !error.message.includes("k"),
+  );
+  assert.equal(calls, 4, "one call plus three bounded retries");
+  assert.deepEqual(waits, [1000, 2000, 4000]);
+
+  // A provider asking for longer than the total budget is not waited on.
+  waits = [];
+  calls = 0;
+  provider = new GroqProvider({ apiKey: "k", sleepImpl: async (ms) => { waits.push(ms); }, fetchImpl: async () => { calls++; return limited({ "retry-after": "60" }); } });
+  await assert.rejects(() => provider.generate({ system: "s", prompt: "p", maxTokens: 10 }), (error) => error.code === "RATE_LIMITED");
+  assert.deepEqual(waits, [10_000, 10_000], "each wait is capped, and the total stays within 20 s");
+  assert.equal(calls, 3);
+});
+
+test("Groq's json_validate_failed is a malformed answer with one repair retry, not an outage", async () => {
+  const rejected = { ok: false, status: 400, headers: new Headers(), json: async () => ({ error: { code: "json_validate_failed", message: "private model output" } }) };
+  const ok = jsonResponse({ choices: [{ finish_reason: "stop", message: { content: JSON.stringify(truth) } }] });
+  let responses = [rejected, ok];
+  let provider = new GroqProvider({ apiKey: "k", fetchImpl: async () => responses.shift() });
+  assert.deepEqual(await provider.generateStructured({ system: "s", prompt: "p", maxTokens: 10 }, truthResolutionSchema), truth);
+
+  responses = [rejected, rejected];
+  provider = new GroqProvider({ apiKey: "k", fetchImpl: async () => responses.shift() });
+  await assert.rejects(
+    () => provider.generateStructured({ system: "s", prompt: "p", maxTokens: 10 }, truthResolutionSchema),
+    (error) => error.code === "INVALID_RESPONSE" && !error.message.includes("private model output"),
+  );
+  // Any other 400 is still a provider error.
+  provider = new GroqProvider({ apiKey: "k", fetchImpl: async () => ({ ok: false, status: 400, headers: new Headers(), json: async () => ({ error: { code: "model_not_found" } }) }) });
+  await assert.rejects(() => provider.generate({ system: "s", prompt: "p", maxTokens: 10 }), (error) => error.code === "PROVIDER_UNAVAILABLE");
+});
+
+test("reset durations parse the formats Groq sends", () => {
+  assert.equal(parseResetDuration("7.66s"), 7660);
+  assert.equal(parseResetDuration("1m2.5s"), 62_500);
+  assert.equal(parseResetDuration("250ms"), 250);
+  assert.equal(parseResetDuration("3"), 3000);
+  assert.equal(parseResetDuration("soon"), null);
+  assert.equal(parseResetDuration(null), null);
 });
 
 test("a truncated or malformed Groq response is rejected, not stored", async () => {

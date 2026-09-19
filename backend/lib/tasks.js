@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { ApiError, notFound, validate } from "./api.js";
 import { academicEventSchema } from "./contracts.js";
-import { EVENT_SOURCE_TO_TASK_SOURCE, EVENT_TYPE_TO_TASK_TYPE, PRIORITIES, TASK_TYPES, taskRecordSchema } from "./domain.js";
+import { EVENT_SOURCE_TO_TASK_SOURCE, EVENT_TYPE_TO_TASK_TYPE, PRIORITIES, TASK_TYPES, taskRecordSchema, taskSourceDetailsSchema } from "./domain.js";
 import { PRIORITY_RANK, calculatePriority } from "./priority.js";
 import { USER_ID, getItem, putNew, queryUser, updateVersioned } from "./store.js";
 import { deadlineInstant } from "./time.js";
@@ -85,6 +85,7 @@ export function toTaskDTO(task, { now, dailyStudyMinutes }, { detail = false } =
     studentEstimatedMinutes: task.studentEstimatedMinutes,
     sourceEstimatedMinutes: task.sourceEstimatedMinutes,
     aiEstimate: task.aiEstimate,
+    details: task.details,
     notes: task.notes,
     checklist: task.checklist,
     attachments: task.attachments.map(publicAttachment),
@@ -98,6 +99,18 @@ export function toTaskDTO(task, { now, dailyStudyMinutes }, { detail = false } =
 // Classroom sourceRef is `<courseId>:<kind>:<itemId>`.
 const classroomCourseId = (event) => (event.sourceType === "classroom" && event.sourceRef ? event.sourceRef.split(":")[0] : null);
 
+// Events stored before structured details existed, with no venue, carry no
+// detail; their Tasks keep `details: null` rather than being rewritten.
+function sourceDetails(event) {
+  if (!event.details && !event.sourceMeta && !event.venue) return null;
+  return taskSourceDetailsSchema.parse({
+    ...(event.details ?? {}),
+    venue: event.venue,
+    postedAt: event.sourceMeta?.postedAt ?? null,
+    updatedAt: event.sourceMeta?.updatedAt ?? null,
+  });
+}
+
 function sourceFields(event, courseName) {
   const courseId = classroomCourseId(event);
   return {
@@ -107,7 +120,8 @@ function sourceFields(event, courseName) {
     sourceStatus: event.status,
     title: event.title,
     type: EVENT_TYPE_TO_TASK_TYPE[event.type] ?? "OTHER",
-    deadline: new Date(deadlineInstant(event.currentDeadline)).toISOString(),
+    deadline: event.currentDeadline ? new Date(deadlineInstant(event.currentDeadline)).toISOString() : null,
+    details: sourceDetails(event),
     // The truth prompt answers 0 when it does not know the effort, so 0 from a
     // source is treated as unknown rather than as "no work required".
     sourceEstimatedMinutes: event.estimatedHours > 0 ? Math.min(10_000, Math.max(1, Math.round(event.estimatedHours * 60))) : null,
@@ -117,6 +131,7 @@ function sourceFields(event, courseName) {
 
 const SOURCE_KEYS = ["academicEventId", "source", "sourceRef", "sourceStatus", "title", "type", "deadline", "sourceEstimatedMinutes"];
 const sameSource = (task, fields) => SOURCE_KEYS.every((key) => task[key] === fields[key])
+  && JSON.stringify(task.details) === JSON.stringify(fields.details)
   && (fields.course === null || (task.course?.id === fields.course.id && (fields.course.name === null || task.course?.name === fields.course.name)));
 
 // Idempotent: the Task for an event always has taskId = eventId, so replaying

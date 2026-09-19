@@ -141,11 +141,17 @@ test("prompt supplies campus time and only projected applicability data", async 
   const text = 'Notice contains "quotes" and {CURRENT_EVENTS_JSON}';
   await handleRequest(request({ text }), f.dependencies);
   const command = f.modelCalls[0].input;
-  assert.match(command.system[0].text, /2026-09-17T10:00/);
+  // A pasted notice is posted when it is received; both reach the metadata.
+  assert.match(command.messages[0].content[0].text, /"postedAt":"2026-09-17T10:00 \(Thursday\)"/);
+  assert.match(command.messages[0].content[0].text, /"processedAt":"2026-09-17T10:00 \(Thursday\)","timeZone":"Asia\/Kolkata"/);
   assert.match(command.messages[0].content[0].text, /\{CURRENT_EVENTS_JSON\}/);
   assert.match(command.messages[0].content[0].text, /\\"quotes\\"/);
   const profileRead = f.calls.find((call) => call.input.TableName === "profiles");
   assert.equal(profileRead.input.ProjectionExpression.includes("classroomTokens"), false);
+  // DynamoDB rejects reserved words used bare; the test double does not, so check here.
+  const bare = profileRead.input.ProjectionExpression.split(/\s*,\s*/).filter((name) => !name.startsWith("#"));
+  assert.deepEqual(bare.filter((name) => ["name", "year", "section", "timezone", "status", "type", "date"].includes(name)), []);
+  assert.equal(profileRead.input.ExpressionAttributeNames["#tz"], "timezone");
   assert.equal(command.system[0].text.includes("accessToken"), false);
 });
 

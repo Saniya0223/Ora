@@ -137,8 +137,16 @@ Resources:
               Action: [dynamodb:GetItem, dynamodb:PutItem]
               Resource: !GetAtt Tasks.Arn
             - Effect: Allow
-              Action: [s3:GetObject, s3:PutObject, s3:HeadObject]
+              Action: [s3:GetObject, s3:PutObject]
               Resource: !Sub '${UploadBucket.Arn}/demo-user/*'
+            # Without ListBucket, S3 answers 403 AccessDenied instead of 404 for
+            # a key that does not exist yet, which the PDF job bookkeeping hits.
+            - Effect: Allow
+              Action: s3:ListBucket
+              Resource: !GetAtt UploadBucket.Arn
+              Condition:
+                StringLike:
+                  s3:prefix: ['demo-user/*']
             - Effect: Allow
               Action:
                 - textract:StartDocumentTextDetection
@@ -261,8 +269,16 @@ Resources:
       Policies:
         - Statement:
             - Effect: Allow
-              Action: [s3:GetObject, s3:PutObject, s3:HeadObject]
+              Action: [s3:GetObject, s3:PutObject]
               Resource: !Sub '${UploadBucket.Arn}/demo-user/*'
+            # Without ListBucket, S3 answers 403 AccessDenied instead of 404 for
+            # a key that does not exist yet, which the PDF job bookkeeping hits.
+            - Effect: Allow
+              Action: s3:ListBucket
+              Resource: !GetAtt UploadBucket.Arn
+              Condition:
+                StringLike:
+                  s3:prefix: ['demo-user/*']
             - Effect: Allow
               Action: [textract:StartDocumentAnalysis, textract:GetDocumentAnalysis, textract:StartDocumentTextDetection, textract:GetDocumentTextDetection]
               Resource: '*'

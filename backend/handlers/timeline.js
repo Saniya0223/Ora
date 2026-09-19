@@ -18,7 +18,8 @@ export async function buildTimeline({ db, bedrock, ai, env, now = () => new Date
     db.send(new GetCommand({ TableName: env.STUDENT_PROFILE_TABLE, Key: { userId: DEMO_USER_ID }, ProjectionExpression: "timetableSlots" })),
   ]);
   const slots = (profile.Item?.timetableSlots ?? []).map((slot) => timetableSlotSchema.parse(slot));
-  const scored = scoreEvents(events, instant);
+  // Deadline scoring needs a deadline; undated or tentative items are skipped.
+  const scored = scoreEvents(events.filter((event) => event.currentDeadline !== null), instant);
   const timetable = expandTimetable(slots, instant);
   const collisions = detectCollisions(scored);
   const { days, unallocated } = allocateWork(scored, timetable, instant, Number(env.DAILY_STUDY_HOURS || 4));

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { eventDetailsSchema } from "./contracts.js";
 
 // Persisted shapes for the student-facing layer: Tasks, focus sessions, and
 // planner blocks. AcademicEvents stay the source-backed truth in contracts.js;
@@ -46,6 +47,14 @@ export const aiEstimateSchema = z.object({
   generatedAt: timestamp,
 });
 
+// Source-owned detail copied from the AcademicEvent: what to do, how, with
+// what, where, and when the source was posted. Never edited by the student.
+export const taskSourceDetailsSchema = eventDetailsSchema.extend({
+  venue: z.string().max(200).nullable().default(null),
+  postedAt: timestamp.nullable().default(null),
+  updatedAt: timestamp.nullable().default(null),
+});
+
 export const taskRecordSchema = z.object({
   userId: z.string().min(1),
   taskId: z.uuid(),
@@ -67,6 +76,7 @@ export const taskRecordSchema = z.object({
   studentEstimatedMinutes: z.number().int().min(1).max(10_000).nullable().default(null),
   sourceEstimatedMinutes: z.number().int().min(1).max(10_000).nullable().default(null),
   aiEstimate: aiEstimateSchema.nullable().default(null),
+  details: taskSourceDetailsSchema.nullable().default(null),
   actualMinutes: z.number().int().nonnegative().default(0),
   bookmarked: z.boolean().default(false),
   notes: z.string().max(20_000).default(""),

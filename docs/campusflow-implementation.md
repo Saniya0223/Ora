@@ -218,23 +218,35 @@ Sort the dashboard's "Today" list by `priorityScore` descending — this is what
 ### Prompt 1 — Truth Resolution Engine (used by `IngestionAndTruthEngine` and `ClassroomSyncEngine`)
 ```text
 You are an Academic Truth Resolution Engine.
-Here is a student's current active schedule: {CURRENT_EVENTS_JSON}
+Here is the student's current tracked schedule: {CURRENT_EVENTS_JSON}
 Here is a new message/document they just received: "{NEW_MESSAGE_TEXT}"
 Source of this message: {SOURCE_TYPE}  // "manual" | "pdf" | "classroom"
+Source metadata: {SOURCE_METADATA_JSON}
 
-Determine how this new message affects the schedule.
-Respond ONLY in this strict JSON format, no preamble, no markdown fences:
+Resolve every distinct student obligation, required action, scheduled item, or meaningful change in the message.
+Respond ONLY in this strict JSON format, with the keys in this order, no preamble, no markdown fences:
 {
-  "action": "CREATE" | "UPDATE" | "CANCEL" | "IGNORE",
-  "targetEventId": "id_of_event_to_update_or_cancel" (null if CREATE or IGNORE),
-  "eventDetails": {
-    "title": string,
-    "type": "Exam" | "Assignment" | "Admin" | "Lecture" | "Club" | "Lab",
-    "currentDeadline": "YYYY-MM-DDTHH:mm",
-    "venue": string,
-    "estimatedHours": number
-  },
-  "changeSummary": "Short explanation of what changed, if anything"
+  "ignoreReason": null, or when results is empty: "no_student_action" | "not_applicable" | "no_new_information" | "informational" | "uncertain",
+  "results": [
+    {
+      "action": "CREATE" | "UPDATE" | "CANCEL",
+      "targetEventId": "id_of_event_to_update_or_cancel" (null for CREATE),
+      "changeSummary": "Short explanation of what changed",
+      "title": string,
+      "type": "Exam" | "Assignment" | "Admin" | "Lecture" | "Club" | "Lab",
+      "currentDeadline": "YYYY-MM-DDTHH:mm" or null,
+      "deadlineText": the exact date/time words from the message, or null,
+      "certainty": "confirmed" | "tentative",
+      "venue": string or null,
+      "estimatedHours": number (0 if unknown),
+      "actionSummary": string or null,
+      "instructions": [string],
+      "requirements": [string],
+      "topics": [string],
+      "submissionMethod": string or null,
+      "links": [{ "label": string or null, "url": string }]
+    }
+  ]
 }
 ```
 
@@ -367,3 +379,27 @@ AWS Lambda must never attempt to connect to Ollama on a developer laptop. The
 truth-resolution logic, deterministic planner math, schemas, API paths,
 Classroom flow, PDF/Textract flow, DynamoDB tables, and frontend remain
 unchanged.
+
+## 17. Approved Truth Resolution v2 amendment (2026-09-19)
+
+Prompt 1 above is the v2 contract. It replaces the single-event contract, which
+framed every notice as a named "event" and made GPT-OSS 20B (reasoning effort
+`low`) IGNORE real obligations such as "Fill in the role names by tomorrow
+6 pm". The system prompt lives in `backend/lib/bedrock.js` (`TRUTH_SYSTEM_PROMPT`).
+
+- One notice resolves to `results[]` (0..N items). An empty list is IGNORE and
+  carries an `ignoreReason`. The original single-result shape is still accepted.
+- Semantics are student obligations and required actions, not only named events.
+- Relative dates are anchored to when the source was posted. Common phrases
+  (today, tonight, tomorrow, parts of the day, weekdays, clock times) are
+  resolved in code from `deadlineText`; the model's value is used only for
+  what code does not parse.
+- An item may have no hard deadline (`currentDeadline: null`): undated, or
+  `certainty: "tentative"` with its possible date in `tentativeDeadline`.
+- AcademicEvents gain optional `details` (actionSummary, instructions,
+  requirements, topics, submissionMethod, links, certainty, deadlineText,
+  tentativeDeadline) and `sourceMeta` (noticeId, itemIndex, itemCount, postedAt,
+  updatedAt). Links are stored only when they appear in the source text.
+- The first item a notice creates keeps the notice's UUID v5; later items use a
+  UUID v5 of the notice ID and their index, so replays never duplicate.
+- The extraction model and reasoning effort are unchanged.
