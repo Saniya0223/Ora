@@ -278,11 +278,11 @@ test("19. one post with three obligations creates three items with stable IDs, a
   assert.equal(result.results.length, 3);
   assert.deepEqual(result.results.map((entry) => entry.action), ["CREATE", "CREATE", "CREATE"]);
   const noticeId = noticeEventId({ text: MULTI, sourceType: "classroom", sourceRef: "c1:announcement:a1" });
-  assert.deepEqual(result.results.map((entry) => entry.event.eventId), [0, 1, 2].map((index) => itemEventId(noticeId, index)));
-  assert.equal(result.results[0].event.eventId, noticeId, "the first item keeps the notice's own ID");
+  assert.equal(new Set(result.results.map((entry) => entry.event.eventId)).size, 3);
+  assert.ok(result.results.every((entry) => entry.event.sourceMeta.noticeId === noticeId));
   assert.deepEqual(result.results.map((entry) => entry.event.sourceMeta.itemIndex), [0, 1, 2]);
   assert.ok(result.results.every((entry) => entry.event.sourceMeta.itemCount === 3));
-  assert.equal(eventOf(db, itemEventId(noticeId, 2)).currentDeadline, ist("2026-09-20T23:59"), "'tomorrow' from Saturday's post");
+  assert.equal(result.results[2].event.currentDeadline, ist("2026-09-20T23:59"), "'tomorrow' from Saturday's post");
   assert.equal(db.all("tasks").length, 3);
 
   const replay = scripted();
@@ -295,22 +295,23 @@ test("19. one post with three obligations creates three items with stable IDs, a
 
 test("a partially ingested post fills only its gap on replay, even if the model reorders items", async () => {
   const db = standardTables().seed("profiles", profile());
-  await ingest(db, MULTI, scripted(multiAnswer()));
+  const initial = await ingest(db, MULTI, scripted(multiAnswer()));
+  const missingId = initial.results[2].event.eventId;
   const noticeId = noticeEventId({ text: MULTI, sourceType: "classroom", sourceRef: "c1:announcement:a1" });
-  db.data.events.delete(JSON.stringify(["demo-user", itemEventId(noticeId, 2)]));
+  db.data.events.delete(JSON.stringify(["demo-user", missingId]));
 
   const answer = multiAnswer();
   const refill = await ingest(db, MULTI, scripted(answer));
-  assert.deepEqual(refill.results.map((entry) => entry.reason ?? entry.action), ["duplicate", "duplicate", "CREATE"]);
-  assert.equal(refill.results[2].event.eventId, itemEventId(noticeId, 2), "the missing item returns under its original ID");
+  assert.deepEqual(refill.results.map((entry) => entry.reason ?? entry.action), ["noChange", "noChange", "CREATE"]);
+  assert.equal(refill.results[2].event.eventId, missingId, "the missing item returns under its original ID");
 
-  db.data.events.delete(JSON.stringify(["demo-user", itemEventId(noticeId, 2)]));
+  db.data.events.delete(JSON.stringify(["demo-user", missingId]));
   const reordered = multiAnswer();
   reordered.results.reverse();
   const again = await ingest(db, MULTI, scripted(reordered));
-  assert.deepEqual(again.results.map((entry) => entry.reason ?? entry.action), ["CREATE", "duplicate", "duplicate"]);
+  assert.deepEqual(again.results.map((entry) => entry.reason ?? entry.action), ["CREATE", "noChange", "noChange"]);
   assert.equal(db.all("events").length, 3, "reordering can neither duplicate nor drop an item");
-  assert.equal(eventOf(db, itemEventId(noticeId, 2)).title, "Bring lab record", "the free slot is found deterministically");
+  assert.equal(eventOf(db, missingId).title, "Bring lab record", "the semantic identity survives reordering");
   assert.equal(db.all("tasks").length, 3);
   const replay = scripted();
   await ingest(db, MULTI, replay);

@@ -20,6 +20,7 @@ import {
 import { TaskForm } from "./task-form";
 import { useStudent } from "./shell";
 import { useFocus } from "./focus";
+import { TaskSourceDetails } from "./task-source-details";
 export function TaskDetail({
   id,
   onDeleted,
@@ -100,6 +101,7 @@ export function TaskDetail({
             {task.isSourceBacked ? " · Source-managed task" : ""}
             {task.sourceStatus === "CANCELLED" ? " · Source cancelled" : ""}
           </p>
+          <TaskSourceDetails task={task} timezone={timezone} />
           <div className="effort-grid">
             <div>
               <span className="mini-icon">

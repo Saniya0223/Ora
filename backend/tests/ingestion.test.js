@@ -35,9 +35,10 @@ function fixture() {
       if (failUpdate || item?.status !== "ACTIVE" || item.changeHistory.length !== values[":historyLength"]) {
         throw Object.assign(new Error(), { name: "ConditionalCheckFailedException" });
       }
-      if (values[":cancelled"]) item.status = "CANCELLED";
-      else Object.assign(item, { title: values[":title"], type: values[":type"], currentDeadline: values[":deadline"], venue: values[":venue"], estimatedHours: values[":hours"], priorityScore: 0 });
-      item.changeHistory.push(...values[":entry"]);
+      for (const [alias, key] of Object.entries(input.ExpressionAttributeNames)) {
+        if (input.UpdateExpression.includes(`${alias} = :${key}`)) item[key] = structuredClone(values[`:${key}`]);
+      }
+      if (values[":entry"]) item.changeHistory.push(...values[":entry"]);
       return { Attributes: structuredClone(item) };
     }
     throw new Error(`Unexpected command ${command.constructor.name}`);
@@ -164,7 +165,7 @@ test("UUID identity tolerates transport whitespace and internal ingestion preser
   assert.equal(result.event.sourceRef, "work-1");
 });
 
-test("pagination is consumed and out-of-window duplicate candidates are refused", async () => {
+test("pagination is consumed and a different dated occurrence is allowed outside the window", async () => {
   const f = fixture();
   const created = JSON.parse((await handleRequest(request({ text: "Initial" }), f.dependencies)).body).event;
   const farFuture = { ...created, currentDeadline: "2026-11-20T11:30:00Z" };
@@ -179,6 +180,6 @@ test("pagination is consumed and out-of-window duplicate candidates are refused"
     return baseSend(command);
   };
   const response = await handleRequest(request({ text: "Possibly revised distant deadline" }), f.dependencies);
-  assert.equal(response.statusCode, 409);
+  assert.equal(response.statusCode, 201);
   assert.equal(pages, 2);
 });

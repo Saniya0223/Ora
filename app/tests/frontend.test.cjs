@@ -19,6 +19,27 @@ function load(relative) {
   return mod.exports;
 }
 const p = load("../lib/presentation.ts");
+const sourcePresentation = load("../lib/source-presentation.ts");
+
+test("Classroom links only open the trusted HTTPS host; resource links reject executable URLs", () => {
+  const { safeSourceLink } = sourcePresentation;
+  assert.equal(safeSourceLink("https://classroom.google.com/c/x/a/y/details", true), "https://classroom.google.com/c/x/a/y/details");
+  for (const value of [null, "javascript:alert(1)", "http://classroom.google.com/c/x", "https://classroom.google.com.evil.test/x", "https://user@classroom.google.com/x"]) assert.equal(safeSourceLink(value, true), null);
+  assert.equal(safeSourceLink("https://forms.gle/form"), "https://forms.gle/form");
+});
+
+test("sync messages distinguish persistent review from temporary, validation, race and rate-limit failures", () => {
+  const base = { failed: 0, truncated: false };
+  const { syncExplanation } = sourcePresentation;
+  const review = syncExplanation({ ...base, needsReview: 1 });
+  assert.match(review, /could not be matched safely/);
+  assert.doesNotMatch(review, /Sync again|Retry sync/);
+  assert.match(syncExplanation({ ...base, temporaryFailed: 1 }), /temporary service issue/);
+  assert.match(syncExplanation({ ...base, validationFailed: 1 }), /interpreted reliably/);
+  assert.match(syncExplanation({ ...base, raceSkipped: 1 }), /changed during processing/);
+  assert.match(syncExplanation({ ...base, rateLimited: true }), /Wait before syncing/);
+  assert.match(syncExplanation(base), /All available/);
+});
 test("unknown estimates stay unknown, distinct from zero", () => {
   assert.equal(p.duration(null), "Estimate pending");
   assert.equal(p.duration(0), "0 min");

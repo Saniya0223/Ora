@@ -16,6 +16,7 @@ export const TRUTH_SYSTEM_PROMPT = [
   "It does not need the words assignment, quiz, exam, event, lecture, or deadline. A request or instruction to do something by a stated date or time is actionable. \"Announcement\" is only the source format: never ignore a notice because it is phrased as an announcement. Interpret the practical obligation, not the label of the post. Actionable examples: \"Fill in your team roles by tomorrow 6 PM.\" \"Bring your lab record tomorrow.\" \"Read the given paper before the next lecture.\" \"Attendance is compulsory for the 2 PM session.\" \"Lab venue changed to LT-3.\"",
   "",
   "One result per distinct item, in the order they appear:",
+  "Match exact sourceRef first: an edit evolves that source's existing obligation even outside the planning window. Use its existing eventId for UPDATE/CANCEL. Different weeks are separate occurrences. Never match across courses. For multiple obligations, keep each existing eventId when their order changes. Closed obligations must not be recreated.",
   "- CREATE a new obligation, action, submission, deadline, activity, attendance requirement, preparation or administrative task not already in the schedule. Forms, sheets, registration, and details are type Admin.",
   "- UPDATE a schedule item that changes meaningfully (deadline, date, time, venue, topics, instructions, submission method, materials, requirements, audience, links, title). A reminder with genuinely new information is an UPDATE. Copy unchanged fields from the existing item.",
   "- CANCEL a schedule item that is cancelled, withdrawn, called off, no longer required, or superseded. Target only an eventId from the schedule.",
@@ -40,7 +41,7 @@ const stamp = (instant, timeZone) => {
 // out, so the schedule costs as few tokens as possible.
 function scheduleView(event, timeZone) {
   const details = event.details ?? {};
-  const view = { eventId: event.eventId, title: event.title, type: event.type };
+  const view = { eventId: event.eventId, title: event.title, type: event.type, sourceRef: event.sourceRef, status: event.status };
   const deadline = event.currentDeadline ? Date.parse(event.currentDeadline) : null;
   view.currentDeadline = deadline === null ? null : `${local(deadline, timeZone).date}T${local(deadline, timeZone).time}`;
   if (event.venue) view.venue = event.venue;
@@ -48,12 +49,15 @@ function scheduleView(event, timeZone) {
   if (details.actionSummary) view.actionSummary = details.actionSummary;
   if (details.submissionMethod) view.submissionMethod = details.submissionMethod;
   if (details.requirements?.length) view.requirements = details.requirements;
+  if (details.instructions?.length) view.instructions = details.instructions;
+  if (details.topics?.length) view.topics = details.topics;
   if (details.links?.length) view.links = details.links.map((link) => link.url);
   return view;
 }
 
-export async function resolveNotice({ text, sourceType, events, profile, now, postedAt = null, updatedAt = null, timeZone = DEFAULT_TIME_ZONE }, dependencies) {
+export async function resolveNotice({ text, sourceType, sourceRef = null, events, profile, now, postedAt = null, updatedAt = null, timeZone = DEFAULT_TIME_ZONE }, dependencies) {
   const metadata = {
+    sourceRef,
     postedAt: stamp(postedAt, timeZone),
     updatedAt: stamp(updatedAt, timeZone),
     processedAt: stamp(now.getTime(), timeZone),

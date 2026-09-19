@@ -155,6 +155,6 @@ test("prompt files match the source-of-truth document verbatim", async () => {
   assert.equal(matches.length, 3);
   for (let index = 0; index < names.length; index++) {
     const prompt = await readFile(new URL(`../prompts/${names[index]}.txt`, import.meta.url), "utf8");
-    assert.equal(prompt.trimEnd(), matches[index][1].trimEnd());
+    assert.equal(prompt.replace(/\r\n/g, "\n").trimEnd(), matches[index][1].replace(/\r\n/g, "\n").trimEnd());
   }
 });

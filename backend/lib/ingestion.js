@@ -7,6 +7,7 @@ import { IngestionError } from "./errors.js";
 import { resolveDeadlineText } from "./relative-date.js";
 import { syncTaskForEvent } from "./tasks.js";
 import { deadlineInstant } from "./time.js";
+import { classroomSourceUrl, sameSource, sameCourse, meaningfulChange } from "./source-truth.js";
 import { DEFAULT_TIME_ZONE, daysBetween, isValidTimeZone, localParts, weekdayOf, zonedInstant } from "./zone.js";
 
 export const DEMO_USER_ID = "demo-user";
@@ -20,6 +21,7 @@ const noticeSchema = z.strictObject({
   // ("tomorrow 6 PM") mean the day after posting, not after processing.
   postedAt: timestamp.nullable().optional(),
   updatedAt: timestamp.nullable().optional(),
+  sourceUrl: z.string().nullable().optional(),
 });
 const applicabilitySchema = studentProfileSchema.pick({ name: true, program: true, year: true, section: true, timezone: true });
 const normalise = (value) => (value ?? "").trim().replace(/\s+/g, " ").toLocaleLowerCase("en");
@@ -43,8 +45,14 @@ function uuid5(parts) {
 // UUID v5: the same source notice gets the same CREATE key, including on a
 // retry after a lost response. The DynamoDB schema still contains only a UUID.
 export function noticeEventId({ text, sourceType, sourceRef }) {
-  return uuid5(["campusflow", DEMO_USER_ID, sourceType, sourceRef, text.trim().replace(/\r\n?/g, "\n")]);
+  return uuid5(sourceType === "classroom"
+    ? ["campusflow", DEMO_USER_ID, sourceType, sourceRef]
+    : ["campusflow", DEMO_USER_ID, sourceType, sourceRef, text.trim().replace(/\r\n?/g, "\n")]);
 }
+
+export const noticeRevision = (notice) => createHash("sha256")
+  .update(JSON.stringify([notice.text.trim().replace(/\r\n?/g, "\n"), notice.updatedAt ?? null, notice.sourceUrl ?? null])).digest("hex");
+const semanticKey = (item) => `${normalise(item.title)}|${item.type}`;
 
 // The nth item a notice creates. The first keeps the notice's own ID, so every
 // event ingested before multi-item notices existed is still recognised.
@@ -247,20 +255,29 @@ export async function ingestNotice(input, dependencies) {
   const receivedAt = now();
   const events = await queryEvents(dependencies);
   const noticeId = noticeEventId(notice);
+  const revision = noticeRevision(notice);
+  const classroom = notice.sourceType === "classroom";
+  const sourceEvents = classroom ? events.filter((event) => sameSource(event, notice)) : [];
+  if (classroom && notice.updatedAt && sourceEvents.some((event) => {
+    const at = event.sourceMeta?.versions?.[notice.sourceRef]?.updatedAt;
+    return at && Date.parse(at) > Date.parse(notice.updatedAt);
+  })) {
+    return finish(notice, noticeId, sourceEvents.map((event) => ignored("alreadyProcessed", event, "A newer source revision is already reflected in your tasks.")), null, dependencies, log);
+  }
 
   // Skip the model entirely for a notice that was already fully ingested.
-  const prior = events.filter((event) => event.eventId === noticeId || event.sourceMeta?.noticeId === noticeId);
+  const prior = classroom
+    ? sourceEvents.filter((event) => event.sourceMeta?.versions?.[notice.sourceRef]?.revision === revision)
+    : events.filter((event) => event.eventId === noticeId || event.sourceMeta?.noticeId === noticeId);
   const expected = Math.max(1, ...prior.map((event) => event.sourceMeta?.itemCount ?? 1));
   if (prior.length >= expected) {
-    const first = prior.find((event) => event.eventId === noticeId) ?? prior[0];
-    const outcome = ignored("alreadyProcessed", first, "This notice was already received. Your current event has been kept.");
-    return finish(notice, noticeId, [outcome], null, dependencies, log);
+    return finish(notice, noticeId, prior.map((event) => ignored("alreadyProcessed", event, "This notice was already received. Your current event has been kept.")), null, dependencies, log);
   }
 
   const start = receivedAt.getTime();
-  const current = (event) => event.status === "ACTIVE" && (event.currentDeadline === null
+  const current = (event) => sameCourse(event, notice) && ((classroom && sameSource(event, notice)) || (event.status === "ACTIVE" && (event.currentDeadline === null
     ? start - Date.parse(event.sourceMeta?.postedAt ?? receivedAt.toISOString()) <= UNDATED_WINDOW_MS
-    : instantOf(event.currentDeadline) >= start && instantOf(event.currentDeadline) <= start + 14 * DAY_MS);
+    : instantOf(event.currentDeadline) >= start && instantOf(event.currentDeadline) <= start + 14 * DAY_MS)));
   const profileResult = await db.send(new GetCommand({
     TableName: profileTableName,
     Key: { userId: DEMO_USER_ID },
@@ -275,7 +292,7 @@ export async function ingestNotice(input, dependencies) {
   const postedAt = notice.postedAt ? Date.parse(notice.postedAt) : start;
 
   const resolution = await resolveNotice({
-    text: notice.text, sourceType: notice.sourceType, events: events.filter(current), profile, now: receivedAt,
+    text: notice.text, sourceType: notice.sourceType, sourceRef: notice.sourceRef, events: events.filter(current), profile, now: receivedAt,
     postedAt, updatedAt: notice.updatedAt ? Date.parse(notice.updatedAt) : null, timeZone,
   }, dependencies);
   if (!resolution.results.length) {
@@ -286,8 +303,16 @@ export async function ingestNotice(input, dependencies) {
   const links = sourceLinks(notice.text);
   const context = { text: notice.text, anchorMs: postedAt, timeZone, links, single: resolution.results.length === 1 };
   const creates = resolution.results.filter((item) => item.action === "CREATE").length;
-  const sourceMeta = { noticeId, itemCount: Math.max(1, creates), postedAt: notice.postedAt ?? receivedAt.toISOString(), updatedAt: notice.updatedAt ?? null };
+  const sourceMeta = { noticeId, itemCount: Math.max(1, classroom ? resolution.results.length : creates), postedAt: notice.postedAt ?? receivedAt.toISOString(), updatedAt: notice.updatedAt ?? null,
+    ...(classroom ? { versions: { [notice.sourceRef]: { revision, updatedAt: notice.updatedAt ?? null } } } : {}),
+  };
+  context.sourceEvents = sourceEvents;
+  context.claimed = new Set();
   const outcomes = [];
+  // When several existing obligations exist, an unexplained rename must not
+  // become a fresh task. The model must provide a known target for that edit.
+  const represented = new Set(resolution.results.flatMap((item) => [item.targetEventId, item.eventDetails ? semanticKey(item.eventDetails) : null]).filter(Boolean));
+  context.unmatchedExisting = sourceEvents.filter((event) => !represented.has(event.eventId) && !represented.has(semanticKey(event)));
   let createIndex = 0;
   for (const item of resolution.results) {
     const index = item.action === "CREATE" ? createIndex++ : null;
@@ -305,15 +330,36 @@ export async function ingestNotice(input, dependencies) {
 }
 
 async function applyItem(item, { notice, events, current, receivedAt, context, sourceMeta, index, db, tableName, log }) {
-  const { action, changeSummary } = item;
+  let { action, changeSummary } = item;
   const historyEntry = `${receivedAt.toISOString()} — ${changeSummary || `Event ${action.toLowerCase()}.`}`;
   const replace = (event) => { events.splice(events.findIndex((entry) => entry.eventId === event.eventId), 1, event); };
+  const metadata = (target) => ({
+    itemIndex: 0, ...sourceMeta, ...target?.sourceMeta,
+    itemCount: sourceMeta.itemCount,
+    updatedAt: sourceMeta.updatedAt,
+    versions: { ...target?.sourceMeta?.versions, ...sourceMeta.versions },
+  });
+  const save = async (target, change, meaningful = true) => {
+    if (notice.sourceType === "classroom") {
+      const version = target.sourceMeta?.versions?.[notice.sourceRef];
+      if (version?.updatedAt && notice.updatedAt && Date.parse(version.updatedAt) > Date.parse(notice.updatedAt)) return target;
+      change.sourceMeta = metadata(target);
+      change.sourceUrl = classroomSourceUrl(notice.sourceUrl) ?? target.sourceUrl ?? null;
+    }
+    const latestChange = meaningfulChange(target, { ...target, ...change }, receivedAt.toISOString(), notice.sourceRef);
+    if (meaningful && latestChange) change.latestChange = latestChange;
+    const entry = latestChange ? `${receivedAt.toISOString()} — ${latestChange.fields.map((field) => `${field.field}: ${field.before ?? "not set"} → ${field.after ?? "not set"}`).join("; ")}` : historyEntry;
+    const event = await writeUpdate(db, tableName, target, change, meaningful ? entry : null);
+    replace(event);
+    return event;
+  };
 
   if (action === "CANCEL") {
     const target = events.find((event) => event.eventId === item.targetEventId && current(event));
     if (!target) throw new IngestionError(409, "UNKNOWN_TARGET", "The notice could not be matched to an active event in the next 14 days. Nothing was changed.");
-    const event = await writeUpdate(db, tableName, target, { status: "CANCELLED" }, historyEntry);
-    replace(event);
+    if (context.sourceEvents.length && !context.sourceEvents.some((event) => event.eventId === target.eventId)) throw new IngestionError(409, "AMBIGUOUS_SOURCE", "This cancellation targets a different source obligation and needs review.");
+    if (target.status === "CANCELLED") return ignored("noChange", target, "This obligation is already cancelled.");
+    const event = await save(target, { status: "CANCELLED" });
     return { action, reason: null, event, changeSummary };
   }
 
@@ -322,13 +368,31 @@ async function applyItem(item, { notice, events, current, receivedAt, context, s
   if (next.disagreed) log({ code: "DEADLINE_RESOLVED_IN_CODE", sourceRef: notice.sourceRef });
   const fields = { title: next.title, type: next.type, currentDeadline: next.currentDeadline, venue: next.venue, estimatedHours: next.estimatedHours, details: next.details };
 
+  // Exact source identity takes precedence over a model's CREATE decision.
+  // Semantic keys survive reordering; explicit model targets handle renames.
+  let sourceTarget;
+  if (notice.sourceType === "classroom" && action === "CREATE") {
+    const candidates = context.sourceEvents.filter((event) => !context.claimed.has(event.eventId));
+    const sameName = candidates.filter((event) => semanticKey(event) === semanticKey(fields));
+    const exactOccurrence = sameName.filter((event) => instantOf(event.currentDeadline) === instantOf(fields.currentDeadline));
+    const matches = exactOccurrence.length ? exactOccurrence : sameName;
+    if (matches.length > 1) throw new IngestionError(409, "AMBIGUOUS_SOURCE", "This source matches multiple obligations and needs review.");
+    sourceTarget = matches[0] ?? (context.single && candidates.length === 1 ? candidates[0] : null);
+    if (!sourceTarget && context.unmatchedExisting.length) throw new IngestionError(409, "AMBIGUOUS_SOURCE", "An edited obligation needs an explicit match before creating more tasks.");
+    if (!sourceTarget && candidates.length && context.single) throw new IngestionError(409, "AMBIGUOUS_SOURCE", "This edited source could not be matched safely.");
+    if (sourceTarget) action = "UPDATE";
+  }
+  if (notice.sourceType === "classroom" && action === "UPDATE" && !sourceTarget && context.sourceEvents.length
+    && !context.sourceEvents.some((event) => event.eventId === item.targetEventId)) {
+    throw new IngestionError(409, "AMBIGUOUS_SOURCE", "This edit targeted a different source obligation and needs review.");
+  }
+
   if (action === "CREATE") {
-    const duplicate = events.find((event) => sameDetails(event, fields)) ?? events.find((event) => sameObligation(event, fields));
-    if (duplicate) return ignored("duplicate", duplicate, "This item is already in your schedule.");
-    const outsideWindowMatch = events.find((event) => event.status === "ACTIVE" && !current(event)
-      && normalise(event.title) === normalise(fields.title) && event.type === fields.type);
-    if (outsideWindowMatch) {
-      throw new IngestionError(409, "OUTSIDE_COMPARISON_WINDOW", "An event with this title exists outside the 14-day comparison window. No duplicate was added.");
+    const duplicate = events.find((event) => sameCourse(event, notice) && (notice.sourceType !== "classroom" || fields.currentDeadline !== null)
+      && (sameDetails(event, fields) || sameObligation(event, fields)));
+    if (duplicate) {
+      const event = notice.sourceType === "classroom" ? await save(duplicate, {}, false) : duplicate;
+      return ignored("duplicate", event, "This item is already in your schedule.");
     }
     // The item's own slot first. A slot held by a different obligation (the
     // model listed items in another order on a replay) moves this item to the
@@ -343,12 +407,14 @@ async function applyItem(item, { notice, events, current, receivedAt, context, s
       }
     }
     if (slot === null) throw new IngestionError(409, "TOO_MANY_ITEMS", "This notice has more items than can be tracked. Nothing more was added.");
-    const eventId = itemEventId(sourceMeta.noticeId, slot);
+    const itemKey = `${semanticKey(fields)}|${fields.currentDeadline ?? "undated"}`;
+    const eventId = notice.sourceType === "classroom" ? uuid5(["classroom-obligation", sourceMeta.noticeId, itemKey]) : itemEventId(sourceMeta.noticeId, slot);
     const event = academicEventSchema.parse({
       userId: DEMO_USER_ID, eventId, ...fields,
       status: "ACTIVE", sourceType: notice.sourceType, sourceRef: notice.sourceRef,
       priorityScore: 0, changeHistory: [historyEntry],
-      sourceMeta: { ...sourceMeta, itemIndex: slot },
+      sourceMeta: { ...sourceMeta, itemIndex: slot, ...(notice.sourceType === "classroom" ? { itemKey } : {}) },
+      ...(notice.sourceType === "classroom" ? { sourceUrl: classroomSourceUrl(notice.sourceUrl) } : {}),
     });
     try {
       await db.send(new PutCommand({
@@ -365,12 +431,19 @@ async function applyItem(item, { notice, events, current, receivedAt, context, s
     return { action, reason: null, event, changeSummary };
   }
 
-  const target = events.find((event) => event.eventId === item.targetEventId && current(event));
+  const target = sourceTarget ?? events.find((event) => event.eventId === item.targetEventId && current(event));
   if (!target) throw new IngestionError(409, "UNKNOWN_TARGET", "The notice could not be matched to an active event in the next 14 days. Nothing was changed.");
+  if (target.status !== "ACTIVE") throw new IngestionError(409, "SOURCE_CLOSED", "This source obligation is closed and needs review before changing it.");
+  context.claimed.add(target.eventId);
   const merged = mergeUpdate(target, fields);
-  if (sameDetails(target, merged)) return ignored("noChange", target, "This information is already reflected in your schedule.");
-  const event = await writeUpdate(db, tableName, target, merged, historyEntry);
-  replace(event);
+  // Additive requirement notices retain prior requirements even if the model
+  // returns only the newly mentioned one. Explicit replacements still replace.
+  if (/\b(as well|also bring|in addition|additionally)\b/i.test(notice.text)) merged.details.requirements = cleanList([...detailsOf(target).requirements, ...merged.details.requirements]);
+  if (sameDetails(target, merged)) {
+    const event = notice.sourceType === "classroom" ? await save(target, {}, false) : target;
+    return ignored("noChange", event, "This information is already reflected in your schedule.");
+  }
+  const event = await save(target, merged);
   return { action, reason: null, event, changeSummary };
 }
 
@@ -379,24 +452,20 @@ async function applyItem(item, { notice, events, current, receivedAt, context, s
 // always preserved, particularly a Classroom ID.
 async function writeUpdate(db, tableName, target, change, historyEntry) {
   const names = { "#status": "status" };
-  const values = { ":active": "ACTIVE", ":historyLength": target.changeHistory.length, ":entry": [historyEntry] };
-  let update;
-  if (change.status === "CANCELLED") {
-    values[":cancelled"] = "CANCELLED";
-    update = "SET #status = :cancelled, changeHistory = list_append(changeHistory, :entry)";
-  } else {
-    names["#type"] = "type";
-    Object.assign(values, {
-      ":title": change.title, ":type": change.type, ":deadline": change.currentDeadline,
-      ":venue": change.venue, ":hours": change.estimatedHours, ":score": 0, ":details": change.details,
-    });
-    update = "SET title = :title, #type = :type, currentDeadline = :deadline, venue = :venue, estimatedHours = :hours, priorityScore = :score, details = :details, changeHistory = list_append(changeHistory, :entry)";
+  const values = { ":active": target.status, ":historyLength": target.changeHistory.length };
+  const setters = [];
+  for (const [key, value] of Object.entries(change)) {
+    names[`#${key}`] = key; values[`:${key}`] = value; setters.push(`#${key} = :${key}`);
   }
+  if (historyEntry) { values[":entry"] = [historyEntry]; setters.push("changeHistory = list_append(changeHistory, :entry)"); }
+  if (!setters.length) return target;
+  let condition = "#status = :active AND size(changeHistory) = :historyLength";
+  if (target.sourceMeta) { names["#meta"] = "sourceMeta"; values[":oldMeta"] = target.sourceMeta; condition += " AND #meta = :oldMeta"; }
   try {
     const result = await db.send(new UpdateCommand({
       TableName: tableName, Key: { userId: DEMO_USER_ID, eventId: target.eventId },
-      ConditionExpression: "#status = :active AND size(changeHistory) = :historyLength",
-      UpdateExpression: update, ExpressionAttributeNames: names, ExpressionAttributeValues: values,
+      ConditionExpression: condition,
+      UpdateExpression: `SET ${setters.join(", ")}`, ExpressionAttributeNames: names, ExpressionAttributeValues: values,
       ReturnValues: "ALL_NEW",
     }));
     return academicEventSchema.parse(result.Attributes);
