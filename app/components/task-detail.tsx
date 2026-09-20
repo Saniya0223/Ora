@@ -25,7 +25,7 @@ function sourceLabel(task: Detail) {
   if (task.source === "CLASSROOM")
     return `From Google Classroom${task.course?.name ? ` · ${task.course.name}` : ""}`;
   if (task.source === "MANUAL_NOTICE") return "From a pasted notice";
-  if (task.source === "PDF") return "From an uploaded PDF";
+  if (task.source === "PDF") return task.sourceFileName ? `From PDF · ${task.sourceFileName}` : "From an uploaded PDF";
   return "Added by you";
 }
 
@@ -88,12 +88,10 @@ export function TaskDetail({
               >
                 <Icon name="bookmark" size={18} />
               </button>
-              {!task.isSourceBacked && (
-                <details className="more-menu">
-                  <summary aria-label="More task actions">•••</summary>
-                  <button onClick={() => setDeleting(true)}>Delete task</button>
-                </details>
-              )}
+              <details className="more-menu">
+                <summary aria-label="More task actions">•••</summary>
+                <button onClick={() => setDeleting(true)}>Delete task</button>
+              </details>
             </div>
           </div>
           <h2 className="detail-title">{task.title}</h2>
@@ -230,10 +228,9 @@ export function TaskDetail({
           )}{" "}
           {deleting && (
             <Modal title="Delete this task?" onClose={() => setDeleting(false)}>
-              <p>
-                This removes the manual task, its attachments, and future study
-                blocks. Focus history is kept.
-              </p>
+              <p>{task.isSourceBacked
+                ? "This hides the task and removes its attachments and future study blocks. The same source post will stay hidden on later syncs; new posts can still create tasks. Focus history is kept."
+                : "This removes the manual task, its attachments, and future study blocks. Focus history is kept."}</p>
               <div className="button-row end">
                 <button
                   className="button secondary"

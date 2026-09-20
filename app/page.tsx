@@ -1,5 +1,6 @@
 "use client";
 import Link from "next/link";
+import Image from "next/image";
 import { useState } from "react";
 import type { Dashboard, TaskListItem, TaskList } from "./lib/types";
 import { useResource, invalidate } from "./lib/data";
@@ -13,11 +14,41 @@ import {
   PriorityBadge,
   Skeleton,
 } from "./components/ui";
-import { CheckSquare, Clock, GraduationCap, Play, CalendarDays } from "lucide-react";
+import { ArrowUpRight, CheckSquare, Clock, GraduationCap, Play, CalendarDays } from "lucide-react";
+
+// Dashboard intro copy. Edit the wording here.
+const DASHBOARD_INTRO = {
+  heading: "Never miss a",
+  emphasis: "deadline again!",
+  description: "Ora stays in sync with Classroom and intelligently prioritizes your tasks based on deadlines, classes, labs, and other activities.",
+  supporting: "No more manually planning your day—just follow your schedule, and tweak it whenever your plans change.",
+};
+
+function DashboardIntro({ children }: { children?: React.ReactNode }) {
+  return (
+    <header className="dashboard-heading">
+      <div className="dashboard-banner">
+        <div className="dashboard-banner-copy">
+          <h1 className="dashboard-title">{DASHBOARD_INTRO.heading}<br /><span>{DASHBOARD_INTRO.emphasis}</span></h1>
+          <div className="dashboard-description">
+            <p>{DASHBOARD_INTRO.description}</p>
+            <p>{DASHBOARD_INTRO.supporting}</p>
+          </div>
+        </div>
+        <div className="dashboard-banner-art" aria-hidden="true">
+          <Image src="/ora-dashboard-study.svg" alt="" width={540} height={460} priority />
+          <Image className="dashboard-classroom-mark" src="/google-classroom.svg" alt="" width={74} height={74} />
+        </div>
+      </div>
+      {children}
+    </header>
+  );
+}
 
 function NextDeadlineCard({ timezone }: { timezone: string }) {
-  const tasks = useResource<TaskList>("/tasks?view=upcoming&sort=deadline");
-  const next = tasks.data?.tasks[0];
+  const tasks = useResource<TaskList>("/tasks?view=all&sort=deadline");
+  const next = tasks.data?.tasks.find((task) => task.status === "OPEN" && task.deadline && task.isOverdue)
+    ?? tasks.data?.tasks.find((task) => task.status === "OPEN" && task.deadline);
 
   return (
     <div className="summary-card" style={{ background: '#f5f4f8', border: '1px solid #e5e4ea' }}>
@@ -25,7 +56,7 @@ function NextDeadlineCard({ timezone }: { timezone: string }) {
         <CalendarDays size={24} strokeWidth={2.5} />
       </span>
       <div>
-        <p style={{ fontWeight: 600, color: '#555466' }}>Next deadline</p>
+        <p style={{ fontWeight: 600, color: '#555466' }}>{next?.isOverdue ? "Overdue deadline" : "Next deadline"}</p>
         {next ? (
           <>
             <strong className="class-title" style={{ color: '#333244', fontSize: '20px' }}>
@@ -35,11 +66,14 @@ function NextDeadlineCard({ timezone }: { timezone: string }) {
               {next.course?.name ? `${next.course.name} · ` : ""}
               {deadline(next.deadline, timezone)}
             </small>
+            <Link className="next-deadline-link" href={`/tasks?task=${encodeURIComponent(next.id)}`}>
+              Open task brief <ArrowUpRight size={14} aria-hidden="true" />
+            </Link>
           </>
         ) : (
           <>
             <strong className="class-title" style={{ color: '#333244', fontSize: '20px' }}>
-              {tasks.loading ? "Checking..." : "All clear"}
+              {tasks.loading ? "Checking..." : tasks.error ? "Unavailable" : "All clear"}
             </strong>
             <small style={{ color: '#666578', fontWeight: 600, display: 'block' }}>
               {tasks.error ? "Unavailable" : "No upcoming deadlines"}
@@ -85,9 +119,7 @@ export default function DashboardPage() {
   if (!data)
     return (
       <div className="animate-in fade-in">
-        <div className="page-heading dashboard-heading">
-          <h1 style={{ fontSize: '38px', color: '#b33d25', fontWeight: 600 }}>No more missed deadlines!</h1>
-        </div>
+        <DashboardIntro />
         <ErrorBox message={error} retry={refresh} />
         {loading && <Skeleton rows={5} />}
       </div>
@@ -97,20 +129,18 @@ export default function DashboardPage() {
 
   return (
     <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-      <div className="page-heading dashboard-heading">
-        <div>
-          <h1 style={{ fontSize: '42px', color: '#b33d25', fontWeight: 600, letterSpacing: '-0.5px' }}>No more missed deadlines!</h1>
-          <p className="today-date" style={{ fontSize: '20px', fontWeight: 600, color: 'var(--muted)', marginTop: '8px' }}>
-            {new Intl.DateTimeFormat("en-GB", {
-              timeZone: zone,
-              weekday: "long",
-              day: "numeric",
-              month: "long",
-            }).format(new Date(data.date.now))}
-            {data.profile.academicWeek !== null && ` · Week ${data.profile.academicWeek}`}
-          </p>
-        </div>
-      </div>
+      <DashboardIntro>
+        <p className="today-date">
+          <CalendarDays size={19} aria-hidden="true" />
+          <span>{new Intl.DateTimeFormat("en-GB", {
+            timeZone: zone,
+            weekday: "long",
+            day: "numeric",
+            month: "long",
+          }).format(new Date(data.date.now))}</span>
+          {data.profile.academicWeek !== null && <span className="dashboard-week">Week {data.profile.academicWeek}</span>}
+        </p>
+      </DashboardIntro>
 
       <ErrorBox message={error || actionError} retry={refresh} />
       

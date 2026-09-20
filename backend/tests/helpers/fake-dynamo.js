@@ -198,6 +198,7 @@ export class FakeDynamo {
 export const standardTables = () => new FakeDynamo({
   profiles: ["userId"], events: ["userId", "eventId"], tasks: ["userId", "taskId"],
   focus: ["userId", "sessionId"], blocks: ["userId", "date"], sync: ["userId", "courseId"],
+  reviews: ["userId", "reviewId"],
 });
 
 export const standardEnv = {

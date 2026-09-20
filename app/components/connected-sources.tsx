@@ -1,14 +1,16 @@
 "use client";
 import { useState } from "react";
+import Image from "next/image";
 import type { Sources } from "../lib/types";
 import { useClassroomSync } from "./classroom-sync";
 import { useResource, invalidate } from "../lib/data";
 import { request, errorMessage } from "../lib/api";
 import { deadline } from "../lib/presentation";
 import { safeSourceLink, syncExplanation, syncSummary } from "../lib/source-presentation";
-import { RefreshCw } from "lucide-react";
+import { CalendarDays, RefreshCw } from "lucide-react";
 import { useStudent } from "./shell";
-import { ErrorBox, Icon, Modal, Skeleton } from "./ui";
+import { ErrorBox, Modal, Skeleton } from "./ui";
+import { ReviewQueue } from "./review-queue";
 export function ConnectedSources({ onTimetable }: { onTimetable: () => void }) {
   const resource = useResource<Sources>("/sources");
   const source = resource.data?.classroom;
@@ -68,30 +70,27 @@ export function ConnectedSources({ onTimetable }: { onTimetable: () => void }) {
         onConnect={() => void connect()}
       />}
       {timetable && (
-        <div className="source-card">
-          <span className="source-icon rose">
-            <Icon name="calendar" size={25} />
+        <div className="source-card timetable-source-card">
+          <span className="timetable-source-icon">
+            <CalendarDays size={26} aria-hidden="true" />
           </span>
-          <div className="source-copy">
+          <div className="timetable-source-copy">
             <strong>Timetable</strong>
             {timetable.status === "READY" ? (
-              <>
-                <p>{timetable.slotCount} classes a week</p>
-                <small>
-                  {timetable.source
-                    ? `From ${timetable.source.fileName} · updated ${deadline(timetable.source.updatedAt, timezone)}`
-                    : "Added manually"}
-                </small>
-              </>
+              <p><span className="status-dot on" />{timetable.slotCount} classes a week</p>
             ) : (
               <p>Add your timetable so Ora can plan around your classes.</p>
             )}
           </div>
-          <button className="button secondary small" onClick={onTimetable}>
+          <button className="timetable-edit-button" onClick={onTimetable}>
             {timetable.status === "READY" ? "Edit" : "Add"}
           </button>
+          {timetable.status === "READY" && <div className="timetable-provenance">
+            {timetable.source?.fileName ? <>From <strong>{timetable.source.fileName}</strong> · updated {deadline(timetable.source.updatedAt, timezone)}</> : "Added manually"}
+          </div>}
         </div>
       )}
+      <ReviewQueue />
       {message && (
         <p className="message" role="status">
           {message}
@@ -177,74 +176,59 @@ function ClassroomCard({ source, syncing, syncError, busy, timezone, onSync, onC
   const result = source.sync.lastResult;
   const courseNames = source.selectedCourses.map((c) => c.name ?? "Untitled course").join(", ");
   return (
-    <div className="source-card classroom-source">
-      <span className="source-icon green">
-        <Icon name="cap" size={25} />
-      </span>
-      <div className="source-copy">
-        <div className="source-head">
-          <strong>Google Classroom</strong>
-          {connected && source.health !== "REAUTH_REQUIRED" && (
-            <button
-              className="button primary small"
-              disabled={busy || syncing}
-              onClick={onSync}
-            >
-              <RefreshCw size={13} className={summary.tone === "busy" ? "spin" : ""} />
-              {summary.tone === "busy" ? "Syncing…" : "Sync now"}
-            </button>
-          )}
+    <div className="source-card classroom-source connected-classroom">
+      <div className="classroom-identity">
+        <Image src="/google-classroom.svg" width={52} height={52} alt="Google Classroom logo" className="classroom-brand" />
+        <div>
+          <h3>Google Classroom</h3>
+          <p className="classroom-connection"><span className={`status-dot ${connected ? "on" : ""}`} />
+            {connected ? "Connected" : "Not connected"}
+            {connected && courseNames && <span className="muted">&middot; {courseNames}</span>}
+          </p>
         </div>
-        <span className="source-status">
-          <span className={`status-dot ${connected ? "on" : ""}`} />
-          {connected ? "Connected" : "Not connected"}
-          {connected && courseNames && <span className="muted"> · {courseNames}</span>}
-        </span>
-        <div className={`sync-summary ${summary.tone}`} role="status">
-          <strong>
-            {summary.tone === "busy" ? "⟳" : summary.tone === "ok" ? "✓" : "⚠"} {summary.title}
-          </strong>
-          {summary.detail && <small>{summary.detail}</small>}
-          {summary.changes.length > 0 && (
-            <ul>{summary.changes.map((change) => <li key={change}>{change}</li>)}</ul>
-          )}
-          {summary.tone !== "busy" && result?.reviewItems?.map((item) => {
-            const url = safeSourceLink(item.sourceUrl, true);
-            const course = source.selectedCourses.find((c) => c.id === item.courseId)?.name ?? "Classroom";
-            return url ? (
-              <small key={item.sourceRef}>
-                {course} post · <a href={url} target="_blank" rel="noopener noreferrer">Review original ↗</a>
-              </small>
-            ) : null;
-          })}
-        </div>
-        {result && summary.tone !== "busy" && (
-          <details className="sync-details">
-            <summary>Details</summary>
-            <small>
-              Checked {result.announcementsScanned} announcements and {result.courseworkScanned} coursework
-              items in {result.coursesScanned} course{result.coursesScanned === 1 ? "" : "s"}
-              {result.ignored ? ` · ${result.ignored} with nothing to do` : ""}.
-              {source.sync.lastFinishedAt ? ` Finished ${deadline(source.sync.lastFinishedAt, timezone)}.` : ""}
-            </small>
-            {summary.tone !== "ok" && <small>{syncExplanation(result)}</small>}
-          </details>
-        )}
-        <div className="button-row source-actions">
-          {connected && (
-            <button className="text-button tiny" disabled={busy} onClick={onChoose}>
-              Choose courses
-            </button>
-          )}
-          <button
-            className={connected ? "text-button tiny" : "button primary small"}
-            disabled={busy}
-            onClick={onConnect}
-          >
+      </div>
+      {connected && source.health !== "REAUTH_REQUIRED" && <div className="classroom-automation">
+        <span>Working in the background</span>
+        <strong>Automatically synced every 15 minutes</strong>
+        <p>Ora watches for coursework edits and brings changes into your tasks. No manual syncing needed.</p>
+      </div>}
+      <div className={`sync-summary classroom-status ${summary.tone}`} role="status">
+        <strong>{summary.tone === "busy" ? "..." : summary.tone === "ok" ? "\u2713" : summary.tone === "review" ? "\u2022" : "!"} {summary.title}</strong>
+        {summary.detail && <small>{summary.detail}</small>}
+        {summary.changes.filter((change) => change !== summary.title).length > 0 && <ul>
+          {summary.changes.filter((change) => change !== summary.title).map((change) => <li key={change}>{change}</li>)}
+        </ul>}
+        {summary.tone !== "busy" && result?.reviewItems?.map((item) => {
+          const url = safeSourceLink(item.sourceUrl, true);
+          const course = source.selectedCourses.find((c) => c.id === item.courseId)?.name ?? "Classroom";
+          return <small key={item.sourceRef}>{course} post &middot; <a href="#source-reviews">Decide what to do</a>{url && <> &middot; <a href={url} target="_blank" rel="noopener noreferrer">Open in Classroom</a></>}</small>;
+        })}
+      </div>
+      <div className="classroom-controls">
+        {connected && source.health !== "REAUTH_REQUIRED" && <div className="classroom-manual">
+          <button className="classroom-sync-button" disabled={busy || syncing} onClick={onSync}>
+            <RefreshCw size={17} className={summary.tone === "busy" ? "spin" : ""} aria-hidden="true" />
+            {summary.tone === "busy" ? "Syncing..." : "Sync now"}
+          </button>
+          <span>Optional immediate refresh</span>
+        </div>}
+        <div className="classroom-links">
+          {connected && <button className="text-button tiny" disabled={busy} onClick={onChoose}>Choose courses</button>}
+          <button className={connected ? "text-button tiny" : "button primary small"} disabled={busy} onClick={onConnect}>
             {connected ? "Reconnect" : "Connect Classroom"}
           </button>
         </div>
       </div>
+      <details className="sync-details classroom-details">
+        <summary>Details</summary>
+        {result ? <small>
+          Checked {result.announcementsScanned} announcements and {result.courseworkScanned} coursework
+          items in {result.coursesScanned} course{result.coursesScanned === 1 ? "" : "s"}
+          {result.ignored ? ` \u00b7 ${result.ignored} with nothing to do` : ""}.
+          {source.sync.lastFinishedAt ? ` Finished ${deadline(source.sync.lastFinishedAt, timezone)}.` : ""}
+        </small> : <small>No sync details yet.</small>}
+        {result && summary.tone !== "ok" && <small>{syncExplanation(result)}</small>}
+      </details>
     </div>
   );
 }

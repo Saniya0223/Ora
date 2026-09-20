@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { extractTableText, finishDocument, prepareUpload, startDocument } from "../lib/documents.js";
+import { documentDownload, extractTableText, finishDocument, prepareUpload, startDocument } from "../lib/documents.js";
 
 const id = "758af182-6b93-4778-9628-13a1348bd324";
 
@@ -10,6 +10,7 @@ test("upload preparation accepts only bounded PDF posts", async () => {
   });
   assert.match(signed.s3Key, /^demo-user\/uploads\/[0-9a-f-]{36}\.pdf$/);
   assert.equal(signed.fields["Content-Type"], "application/pdf");
+  assert.equal(Buffer.from(signed.fields["x-amz-meta-campusflow-filename"], "base64url").toString(), "timetable.pdf");
   await assert.rejects(() => prepareUpload({ fileName: "x", contentType: "image/png", size: 1 }, { s3: {}, bucket: "uploads" }), /Choose a PDF/);
 });
 
@@ -30,7 +31,7 @@ test("Textract start is idempotent and never accepts an arbitrary S3 key", async
   const s3 = { async send(command) {
     calls.push(command.constructor.name);
     if (command.constructor.name === "GetObjectCommand") throw Object.assign(new Error(), { name: "NoSuchKey" });
-    if (command.constructor.name === "HeadObjectCommand") return { ContentType: "application/pdf", ContentLength: 100, ETag: "etag" };
+    if (command.constructor.name === "HeadObjectCommand") return { ContentType: "application/pdf", ContentLength: 100, ETag: "etag", Metadata: { "campusflow-filename": Buffer.from("Fall_Timetable.pdf").toString("base64url") } };
     if (command.constructor.name === "GetObjectCommand") return { Body: { transformToString: async () => "%PDF-" } };
     return { ETag: "new-etag" };
   } };
@@ -38,13 +39,29 @@ test("Textract start is idempotent and never accepts an arbitrary S3 key", async
   let gets = 0;
   s3.send = async (command) => {
     if (command.constructor.name === "GetObjectCommand") { gets++; if (gets === 1) throw Object.assign(new Error(), { name: "NoSuchKey" }); return { Body: { transformToString: async () => "%PDF-" } }; }
-    if (command.constructor.name === "HeadObjectCommand") return { ContentType: "application/pdf", ContentLength: 100, ETag: "etag" };
+    if (command.constructor.name === "HeadObjectCommand") return { ContentType: "application/pdf", ContentLength: 100, ETag: "etag", Metadata: { "campusflow-filename": Buffer.from("Fall_Timetable.pdf").toString("base64url") } };
     return { ETag: "new-etag" };
   };
   const textract = { async send(command) { assert.equal(command.input.FeatureTypes[0], "TABLES"); return { JobId: "textract-job" }; } };
   const result = await startDocument({ s3Key: `demo-user/uploads/${id}.pdf`, kind: "timetable" }, { s3, textract, bucket: "uploads" });
   assert.equal(result.status, "PROCESSING");
+  assert.equal(result.fileName, "Fall_Timetable.pdf");
   await assert.rejects(() => startDocument({ s3Key: "other-user/x.pdf", kind: "timetable" }, { s3, textract, bucket: "uploads" }), /uploaded through CampusFlow/);
+});
+
+test("notice PDF download uses a short-lived signed URL and never exposes its S3 key", async () => {
+  const s3Key = `demo-user/uploads/${id}.pdf`;
+  const s3 = { async send() { return { ETag: "etag", Body: { transformToString: async () => JSON.stringify({ jobId: id, kind: "notice", status: "SUCCEEDED", s3Key, fileName: "Lab_Assignment_3.pdf" }) } }; } };
+  let signedInput;
+  const result = await documentDownload(id, { s3, bucket: "uploads" }, async (_client, command, options) => {
+    signedInput = { command: command.input, options }; return "https://files.example.test/signed";
+  });
+  assert.equal(result.fileName, "Lab_Assignment_3.pdf");
+  assert.equal(result.expiresInSeconds, 300);
+  assert.equal(signedInput.options.expiresIn, 300);
+  assert.equal(signedInput.command.Key, s3Key);
+  assert.ok(signedInput.command.ResponseContentDisposition.includes("Lab_Assignment_3.pdf"));
+  assert.equal(JSON.stringify(result).includes(s3Key), false);
 });
 
 test("a completed timetable job is normalized and made available for student review", async () => {

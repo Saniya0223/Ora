@@ -11,6 +11,8 @@ export function classroomSource(profile, syncRows, now) {
   const connected = Boolean(profile?.classroomTokens);
   const names = new Map(syncRows.map((row) => [row.courseId, row]));
   const record = profile?.classroomSync ?? null;
+  const reviewItems = syncRows.flatMap((row) => (row.reviewItems ?? []).map((item) => ({ courseId: row.courseId, ...item })));
+  const lastResult = record?.lastResult ? { ...record.lastResult, needsReview: reviewItems.length, reviewItems } : null;
   const leaseActive = (profile?.classroomSyncLease ?? 0) > now.getTime();
   let status = record?.status ?? "NEVER_SYNCED";
   let lastErrorCode = record?.lastErrorCode ?? null;
@@ -32,7 +34,7 @@ export function classroomSource(profile, syncRows, now) {
     sync: {
       status, trigger: record?.trigger ?? null, stale,
       lastAttemptAt: record?.lastAttemptAt ?? null, lastFinishedAt: record?.lastFinishedAt ?? null,
-      lastSuccessfulSyncAt: record?.lastSuccessfulSyncAt ?? null, lastErrorCode, lastResult: record?.lastResult ?? null,
+      lastSuccessfulSyncAt: record?.lastSuccessfulSyncAt ?? null, lastErrorCode, lastResult,
     },
   };
 }

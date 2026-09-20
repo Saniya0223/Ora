@@ -13,7 +13,7 @@ export function safeSourceLink(value: string | null | undefined, classroom = fal
 export function syncExplanation(result: SyncResult | null | undefined): string {
   if (!result) return "Sync details are not available yet.";
   const messages = [];
-  if (result.needsReview) messages.push(`${result.needsReview} Classroom item(s) could not be matched safely. Review the original post; editing it will retry that item.`);
+  if (result.needsReview) messages.push(`${result.needsReview} Classroom item(s) need your decision in Updates needing review.`);
   if (result.rateLimited) messages.push("AI rate limit reached. Wait before syncing again; remaining items are saved for retry.");
   else if (result.temporaryFailed) messages.push(`${result.temporaryFailed} item(s) hit a temporary service issue. Retry sync.`);
   if (result.validationFailed) messages.push(`${result.validationFailed} item(s) could not be interpreted reliably. Retry or clarify the original post.`);
@@ -54,7 +54,7 @@ export function timeAgo(iso: string, now = Date.now()): string {
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
 
 export type SyncSummary = {
-  tone: "ok" | "busy" | "warn" | "error";
+  tone: "ok" | "busy" | "review" | "warn" | "error";
   title: string;
   detail: string | null;
   changes: string[];
@@ -65,7 +65,6 @@ export type SyncSummary = {
 export function syncSummary(classroom: Sources["classroom"], now = Date.now()): SyncSummary {
   const { sync, health } = classroom;
   const result = sync.lastResult;
-  const ago = sync.lastSuccessfulSyncAt ? `Last synced ${timeAgo(sync.lastSuccessfulSyncAt, now)}` : null;
   if (classroom.connection !== "CONNECTED" || health === "DISCONNECTED")
     return { tone: "warn", title: "Not connected", detail: "Connect Google Classroom to bring in your coursework.", changes: [] };
   if (health === "REAUTH_REQUIRED" || sync.status === "REAUTH_REQUIRED")
@@ -78,7 +77,7 @@ export function syncSummary(classroom: Sources["classroom"], now = Date.now()): 
     const detail = sync.lastErrorCode === "CLASSROOM_ACCESS_DENIED"
       ? "Ora can no longer read a selected course. Reconnect or choose courses again."
       : "Classroom couldn't be synced right now. Try again shortly.";
-    return { tone: "error", title: "Sync didn't finish", detail, changes: [] };
+    return { tone: "error", title: "Couldn't sync Classroom", detail, changes: [] };
   }
   const changes = result ? [
     result.created ? plural(result.created, "new task added", "new tasks added") : "",
@@ -86,12 +85,12 @@ export function syncSummary(classroom: Sources["classroom"], now = Date.now()): 
     result.cancelled ? plural(result.cancelled, "task cancelled", "tasks cancelled") : "",
   ].filter(Boolean) : [];
   if (result?.needsReview)
-    return { tone: "warn", title: `${plural(result.needsReview, "Classroom item needs", "Classroom items need")} review`, detail: "Open the original post to check it. Editing it will retry.", changes };
+    return { tone: "review", title: `${result.needsReview} Classroom update${result.needsReview === 1 ? "" : "s"} need${result.needsReview === 1 ? "s" : ""} review`, detail: "Review the uncertain source update before changing a task.", changes };
   if (result && (result.rateLimited || result.temporaryFailed || result.validationFailed || result.raceSkipped || result.failed))
     return { tone: "warn", title: "Some Classroom items could not be synced", detail: "You can try again shortly. Your existing tasks are safe.", changes };
   if (health === "STALE")
-    return { tone: "warn", title: "Classroom hasn't synced in a while", detail: ago ? `${ago}. Sync now to check for changes.` : "Sync now to check for changes.", changes: [] };
+    return { tone: "warn", title: "Classroom sync is delayed", detail: "Automatic syncing will retry. You can also sync now.", changes: [] };
   if (changes.length)
-    return { tone: "ok", title: ago ?? "Synced", detail: result?.truncated ? "More items will sync next time." : null, changes };
-  return { tone: "ok", title: "You're up to date", detail: ago ? `No new Classroom changes · ${ago.toLowerCase()}` : "No new Classroom changes", changes: [] };
+    return { tone: "ok", title: result?.updated === 1 && !result.created && !result.cancelled ? "1 task updated" : "Classroom changes synced", detail: result?.truncated ? "More items will sync next time." : null, changes };
+  return { tone: "ok", title: "You're up to date", detail: "No new Classroom changes", changes: [] };
 }

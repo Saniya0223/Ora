@@ -36,6 +36,7 @@ export function priorityOf(task, now, dailyStudyMinutes) {
 }
 
 export const publicAttachment = ({ s3Key, ...attachment }) => attachment;
+const COMPLETED_ACTIVE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
 // Progress keeps two separate meanings: study time against the estimate, and
 // checklist completion. They are never blended into one percentage.
@@ -59,6 +60,7 @@ export function toTaskDTO(task, { now, dailyStudyMinutes }, { detail = false } =
     status: task.status,
     completedAt: task.completedAt,
     cancelledAt: task.cancelledAt,
+    deletedAt: task.deletedAt,
     isOverdue: task.status === "OPEN" && task.deadline !== null && Date.parse(task.deadline) < now.getTime(),
     calculatedPriority: priority.calculated,
     priorityReason: priority.reason,
@@ -78,6 +80,11 @@ export function toTaskDTO(task, { now, dailyStudyMinutes }, { detail = false } =
     attachmentCount: task.attachments.filter((attachment) => attachment.status === "READY").length,
     createdAt: task.createdAt,
     updatedAt: task.updatedAt,
+    recentSourceChange: task.latestChange && now.getTime() - Date.parse(task.latestChange.at) <= COMPLETED_ACTIVE_WINDOW_MS
+      ? { at: task.latestChange.at, label: task.latestChange.fields.some((field) => field.field === "currentDeadline")
+        ? "Deadline changed" : task.latestChange.fields.some((field) => field.field === "instructions")
+          ? "Instructions changed" : task.source === "CLASSROOM" ? "Updated from Classroom" : "Source updated" }
+      : null,
     version: task.version,
   };
   if (!detail) return dto;
@@ -88,6 +95,9 @@ export function toTaskDTO(task, { now, dailyStudyMinutes }, { detail = false } =
     aiEstimate: task.aiEstimate,
     details: task.details,
     sourceUrl: task.source === "CLASSROOM" ? classroomSourceUrl(task.sourceUrl) : null,
+    sourceFileName: task.source === "PDF" ? task.sourceFileName : null,
+    sourceDocumentId: task.source === "PDF" ? task.sourceDocumentId : null,
+    linkedSources: task.linkedSources,
     latestChange: task.latestChange,
     notes: task.notes,
     checklist: task.checklist,
@@ -126,6 +136,9 @@ function sourceFields(event, courseName) {
     deadline: event.currentDeadline ? new Date(deadlineInstant(event.currentDeadline)).toISOString() : null,
     details: sourceDetails(event),
     sourceUrl: event.sourceType === "classroom" ? classroomSourceUrl(event.sourceUrl) : null,
+    sourceFileName: event.sourceType === "pdf" ? event.sourceMeta?.fileName ?? null : null,
+    sourceDocumentId: event.sourceType === "pdf" ? event.sourceMeta?.documentId ?? null : null,
+    linkedSources: event.linkedSources ?? [],
     latestChange: event.latestChange ?? null,
     // The truth prompt answers 0 when it does not know the effort, so 0 from a
     // source is treated as unknown rather than as "no work required".
@@ -134,8 +147,9 @@ function sourceFields(event, courseName) {
   };
 }
 
-const SOURCE_KEYS = ["academicEventId", "source", "sourceRef", "sourceStatus", "title", "type", "deadline", "sourceEstimatedMinutes"];
+const SOURCE_KEYS = ["academicEventId", "source", "sourceRef", "sourceStatus", "title", "type", "deadline", "sourceEstimatedMinutes", "sourceFileName", "sourceDocumentId"];
 const sameSource = (task, fields) => SOURCE_KEYS.every((key) => task[key] === fields[key])
+  && JSON.stringify(task.linkedSources) === JSON.stringify(fields.linkedSources)
   && task.sourceUrl === fields.sourceUrl
   && JSON.stringify(task.latestChange) === JSON.stringify(fields.latestChange)
   && JSON.stringify(task.details) === JSON.stringify(fields.details)
@@ -203,7 +217,7 @@ export async function reconcileTasks(db, tables, now = new Date()) {
     const { task } = await applyEventToTask(db, tables.tasks, event, { courseName, now });
     tasks.set(task.taskId, task);
   }
-  return [...tasks.values()];
+  return [...tasks.values()].filter((task) => !task.deletedAt);
 }
 
 // ---------------------------------------------------------------------------
@@ -223,7 +237,8 @@ export const listQuerySchema = z.strictObject({
 });
 
 function inView(dto, view, now) {
-  if (view === "all") return dto.status !== "CANCELLED";
+  if (view === "all") return dto.status === "OPEN" || (dto.status === "COMPLETED"
+    && (!dto.completedAt || now.getTime() - Date.parse(dto.completedAt) <= COMPLETED_ACTIVE_WINDOW_MS));
   if (view === "upcoming") return dto.status === "OPEN" && dto.deadline !== null && Date.parse(dto.deadline) >= now.getTime();
   if (view === "high_priority") return dto.status === "OPEN" && dto.effectivePriority === "HIGH";
   if (view === "completed") return dto.status === "COMPLETED";
@@ -264,7 +279,7 @@ export function filterTasks(dtos, filters, now, timeZone) {
 export async function getTaskRecord(db, tableName, taskId) {
   if (!z.uuid().safeParse(taskId).success) throw notFound("task");
   const row = await getItem(db, tableName, taskKey(taskId));
-  if (!row) throw notFound("task");
+  if (!row || row.deletedAt) throw notFound("task");
   return parseTask(row);
 }
 

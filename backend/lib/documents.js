@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { GetObjectCommand, HeadObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import { createPresignedPost } from "@aws-sdk/s3-presigned-post";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { StartDocumentAnalysisCommand, StartDocumentTextDetectionCommand, GetDocumentAnalysisCommand, GetDocumentTextDetectionCommand } from "@aws-sdk/client-textract";
 import { z } from "zod";
 import { timetableNormalizationSchema } from "./contracts.js";
@@ -14,16 +15,17 @@ export const MAX_PDF_BYTES = 10 * 1024 * 1024;
 const jobKey = (id) => `demo-user/jobs/${z.uuid().parse(id)}.json`;
 const noObject = (error) => error.name === "NoSuchKey" || error.name === "NotFound" || error.$metadata?.httpStatusCode === 404 || error.name === "AccessDenied" || error.$metadata?.httpStatusCode === 403;
 const conditionFailed = (error) => error.name === "PreconditionFailed" || error.$metadata?.httpStatusCode === 412;
-const publicJob = (job) => ({ jobId: job.jobId, kind: job.kind, status: job.status, ...(job.result ? { result: job.result } : {}), ...(job.error ? { error: job.error } : {}) });
+const publicJob = (job) => ({ jobId: job.jobId, kind: job.kind, status: job.status, ...(job.fileName ? { fileName: job.fileName } : {}), ...(job.result ? { result: job.result } : {}), ...(job.error ? { error: job.error } : {}) });
 
 export async function prepareUpload(input, { s3, bucket, signUpload = createPresignedPost }) {
   const value = z.strictObject({ fileName: z.string().min(1).max(200), contentType: z.literal("application/pdf"), size: z.number().int().positive().max(MAX_PDF_BYTES) }).safeParse(input);
   if (!value.success) throw new IngestionError(400, "INVALID_PDF", "Choose a PDF file no larger than 10 MB.");
   const s3Key = `demo-user/uploads/${randomUUID()}.pdf`;
+  const encodedName = Buffer.from(value.data.fileName, "utf8").toString("base64url");
   const signed = await signUpload(s3, {
     Bucket: bucket, Key: s3Key, Expires: 300,
-    Conditions: [["content-length-range", 1, MAX_PDF_BYTES], { "Content-Type": "application/pdf" }],
-    Fields: { "Content-Type": "application/pdf" },
+    Conditions: [["content-length-range", 1, MAX_PDF_BYTES], { "Content-Type": "application/pdf" }, { "x-amz-meta-campusflow-filename": encodedName }],
+    Fields: { "Content-Type": "application/pdf", "x-amz-meta-campusflow-filename": encodedName },
   });
   return { s3Key, ...signed };
 }
@@ -59,7 +61,10 @@ export async function startDocument({ s3Key, kind }, dependencies) {
   const token = createHash("sha256").update(JSON.stringify([s3Key, kind, object.VersionId, object.ETag])).digest("hex");
   const parameters = { DocumentLocation: { S3Object: { Bucket: bucket, Name: s3Key, ...(object.VersionId ? { Version: object.VersionId } : {}) } }, ClientRequestToken: token };
   const started = await textract.send(kind === "timetable" ? new StartDocumentAnalysisCommand({ ...parameters, FeatureTypes: ["TABLES"] }) : new StartDocumentTextDetectionCommand(parameters)).catch(at("textract-start"));
-  const job = { jobId: id, s3Key, kind, textractJobId: started.JobId, status: "PROCESSING", createdAt: new Date().toISOString() };
+  const decodedName = object.Metadata?.["campusflow-filename"]
+    ? Buffer.from(object.Metadata["campusflow-filename"], "base64url").toString("utf8") : null;
+  const fileName = decodedName && z.string().min(1).max(200).safeParse(decodedName).success ? decodedName : null;
+  const job = { jobId: id, s3Key, kind, ...(fileName ? { fileName } : {}), textractJobId: started.JobId, status: "PROCESSING", createdAt: new Date().toISOString() };
   try { await writeJob(job, dependencies, { IfNoneMatch: "*" }); }
   catch (error) { if (!conditionFailed(error)) at("write-job")(error); return publicJob((await readJob(id, dependencies)).job); }
   return publicJob(job);
@@ -116,7 +121,8 @@ export async function finishDocument(id, dependencies) {
     if (job.kind === "notice") {
       const text = blocks.filter((block) => block.BlockType === "LINE").map((block) => block.Text).join("\n");
       if (!text.trim() || text.length > 12_000) throw new IngestionError(422, "PDF_TEXT_LIMIT", "Use a shorter notice with readable text (at most 12,000 extracted characters).");
-      job.result = await ingestNotice({ text, sourceType: "pdf", sourceRef: job.s3Key }, dependencies);
+      job.result = await ingestNotice({ text, sourceType: "pdf", sourceRef: job.s3Key,
+        ...(job.fileName ? { sourceFileName: job.fileName } : {}), sourceDocumentId: job.jobId }, dependencies);
     } else {
       const table = extractTableText(blocks);
       if (table.text.length > 50_000) throw new IngestionError(413, "TIMETABLE_TOO_LARGE", "Split this timetable into a smaller PDF.");
@@ -137,4 +143,16 @@ export async function finishDocument(id, dependencies) {
   delete job.processingUntil;
   await writeJob(job, dependencies, { IfMatch: lease.ETag });
   return publicJob(job);
+}
+
+export async function documentDownload(id, dependencies, sign = getSignedUrl) {
+  const receipt = await readJob(id, dependencies);
+  if (!receipt || receipt.job.kind !== "notice" || receipt.job.status !== "SUCCEEDED") {
+    throw new IngestionError(404, "DOCUMENT_NOT_FOUND", "That notice PDF is not available.");
+  }
+  const fileName = receipt.job.fileName ?? "notice.pdf";
+  const disposition = `attachment; filename="notice.pdf"; filename*=UTF-8''${encodeURIComponent(fileName)}`;
+  const url = await sign(dependencies.s3, new GetObjectCommand({ Bucket: dependencies.bucket, Key: receipt.job.s3Key,
+    ResponseContentDisposition: disposition }), { expiresIn: 300 });
+  return { url, fileName, expiresInSeconds: 300 };
 }

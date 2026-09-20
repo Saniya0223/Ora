@@ -149,10 +149,31 @@ export type TaskInput = {
   notes?: string;
 };
 export type NoticeResult = {
-  action: "CREATE" | "UPDATE" | "CANCEL" | "IGNORE";
+  action: "CREATE" | "UPDATE" | "CANCEL" | "IGNORE" | "REVIEW";
   changeSummary: string;
   taskId?: string;
   event: { eventId: string } | null;
+};
+export type ReviewAction =
+  | "UPDATE_EXISTING" | "UPDATE_EXISTING_CLASS_TIME" | "CREATE_NEW" | "CREATE_NEW_CLASS_TIME"
+  | "USE_CLASS_TIME" | "KEEP_NO_DEADLINE" | "IGNORE" | "CANCEL";
+export type SourceReview = {
+  id: string;
+  status: "OPEN" | "RESOLVED";
+  sourceType: "classroom" | "pdf" | "manual";
+  sourceFileName: string | null;
+  sourceUrl: string | null;
+  sourceExcerpt: string;
+  detectedTitle: string;
+  ambiguity: string;
+  reasons: string[];
+  candidates: { eventId: string; title: string; deadline: string | null; sourceType: string; type?: string | null; why?: string[] }[];
+  suggestedDeadline: string | null; // the timetable's next class, in the student's local time
+  classLabel?: string | null;
+  recommendedAction: ReviewAction;
+  options: ReviewAction[];
+  createdAt: string;
+  updatedAt: string;
 };
 export type DocumentJob = {
   jobId: string;
@@ -203,12 +224,17 @@ export type TaskListItem = {
   attachmentCount: number; // READY attachments only
   createdAt: ISODateTime;
   updatedAt: ISODateTime;
+  recentSourceChange?: { at: ISODateTime; label: string } | null;
+  deletedAt?: ISODateTime | null;
   version: number; // informational
 };
 
 // Returned by single-task routes.
 export type TaskDetail = TaskListItem & {
   sourceUrl?: string | null;
+  sourceFileName?: string | null;
+  sourceDocumentId?: string | null;
+  linkedSources?: { sourceType: "manual" | "pdf" | "classroom"; sourceRef: string; fileName: string | null; documentId: string | null }[];
   latestChange?: { at: string; sourceRef: string | null; fields: { field: string; before: string | null; after: string | null }[] } | null;
   details?: {
     actionSummary: string | null;

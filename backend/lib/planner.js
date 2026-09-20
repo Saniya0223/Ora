@@ -251,7 +251,7 @@ export async function planningInputs(dependencies, now) {
   const replaceable = existing.filter((block) => block.generated && Date.parse(block.start) >= nowMs);
   const today = localParts(nowMs, timeZone).date;
   const classes = classOccurrences(profile.timetableSlots, today, addDays(today, HORIZON_DAYS), timeZone);
-  return { profile, preferences, timeZone, tasks, openTasks, keptBlocks, replaceable, classes, today };
+  return { profile, preferences, timeZone, slots: profile.timetableSlots, tasks, openTasks, keptBlocks, replaceable, classes, today };
 }
 
 async function savePlanningState(db, tableName, state) {

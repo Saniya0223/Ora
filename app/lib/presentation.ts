@@ -27,6 +27,12 @@ export function clock12h(value: string, timezone: string) {
     hour12: true,
   }).format(new Date(value)).replace(" ", "").toLowerCase();
 }
+// "9:00 – 10:00am": the meridiem is written once when both ends share it.
+export function timeRange(start: string, end: string, timezone: string) {
+  const from = clock12h(start, timezone);
+  const to = clock12h(end, timezone);
+  return from.slice(-2) === to.slice(-2) ? `${from.slice(0, -2)} – ${to}` : `${from} – ${to}`;
+}
 export function dateKey(value: string | Date, timezone: string) {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: timezone,

@@ -48,7 +48,7 @@ export async function estimateTaskEffort(dependencies, tableName, taskId, now = 
 export async function enrichUnestimatedTasks(dependencies, tableName, { limit = 3, deadlineAt = Number.POSITIVE_INFINITY, now = new Date() } = {}) {
   let estimated = 0;
   const candidates = (await queryUser(dependencies.db, tableName)).map((row) => taskRecordSchema.parse(row))
-    .filter((task) => task.status === "OPEN" && effectiveEstimate(task).minutes === null)
+    .filter((task) => task.status === "OPEN" && !task.deletedAt && effectiveEstimate(task).minutes === null)
     .sort((a, b) => (a.deadline ?? "9999").localeCompare(b.deadline ?? "9999") || a.taskId.localeCompare(b.taskId))
     .slice(0, limit);
   for (const task of candidates) {

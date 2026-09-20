@@ -94,6 +94,22 @@ test("identical inputs produce identical blocks and block IDs", () => {
 const profileRow = (overrides = {}) => ({ userId: "demo-user", name: "Maya", program: "CS", year: "3", section: "A", connectedCourses: [], timetableSlots: [slot("Monday", "19:00", "20:00")], planning: prefs, ...overrides });
 const deps = (db) => ({ db, env: standardEnv, tables: { profile: "profiles", tasks: "tasks", events: "events", blocks: "blocks", syncState: "sync" } });
 
+test("a timetable-only change invalidates the plan and moves study away from the new class", async () => {
+  const { db } = await world(profileRow({ timetableSlots: [] }));
+  const first = await replan(deps(db), { now });
+  const firstFingerprint = db.get("profiles", { userId: "demo-user" }).planningState.fingerprint;
+  const classSlot = slot("Monday", "18:00", "23:00");
+  db.seed("profiles", { ...db.get("profiles", { userId: "demo-user" }), timetableSlots: [classSlot] });
+
+  const refreshed = await ensurePlanFresh(deps(db), now);
+  assert.equal(refreshed.replanned, true);
+  assert.notEqual(refreshed.planningState.fingerprint, firstFingerprint);
+  const classTimes = classOccurrences([classSlot], "2026-09-21", "2026-09-21", TZ);
+  const after = await plannerRange(deps(db), { from: "2026-09-21", to: "2026-09-27" }, now, refreshed);
+  assert.ok(first.blocks.some((block) => classTimes.some((occurrence) => overlaps(block, occurrence))), "the old plan used the newly occupied class time");
+  assert.ok(!after.blocks.filter((block) => block.type === "STUDY").some((block) => classTimes.some((occurrence) => overlaps(block, occurrence))), "the new plan avoids the class");
+});
+
 async function world(profile = profileRow()) {
   const db = standardTables().seed("profiles", profile);
   const essay = await createManualTask(db, "tasks", { title: "Essay", deadline: "2026-09-25T18:00", estimatedMinutes: 300 }, { now, timeZone: TZ });

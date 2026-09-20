@@ -11,6 +11,7 @@ import {
   ErrorBox,
   PriorityBadge,
   Skeleton,
+  Modal,
 } from "../components/ui";
 import { TaskDetail } from "../components/task-detail";
 import { TaskForm, taskTypes } from "../components/task-form";
@@ -37,6 +38,9 @@ function Tasks() {
   const [sort, setSort] = useState("priority");
   const [bookmarked, setBookmarked] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [deleteAll, setDeleteAll] = useState(false);
+  const [deleteConfirmation, setDeleteConfirmation] = useState("");
+  const [deletingAll, setDeletingAll] = useState(false);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const { timezone } = useStudent();
@@ -183,6 +187,7 @@ function Tasks() {
           >
             Clear filters
           </button>
+          <button className="text-button tiny" style={{ marginTop: '24px', marginLeft: 'auto', color: 'var(--muted)' }} onClick={() => setDeleteAll(true)}>Delete all tasks…</button>
         </div>
       )}
       <ErrorBox message={error || list.error} retry={list.refresh} />
@@ -232,6 +237,7 @@ function Tasks() {
                     >
                       {t.title}
                     </strong>
+                    {t.recentSourceChange && <span className="source-update-badge" title={`Source updated ${deadline(t.recentSourceChange.at, timezone)}`}>{t.recentSourceChange.label}</span>}
                   </div>
                   <p className="muted tiny" style={{ fontSize: '13px', marginTop: '8px' }}>
                     {t.status === "COMPLETED"
@@ -281,6 +287,27 @@ function Tasks() {
           onSaved={(t) => select(t.id)}
         />
       )}
+      {deleteAll && <Modal title="Delete all tasks?" onClose={() => setDeleteAll(false)}>
+        <p>This removes all current tasks and future study blocks. Tasks from existing Classroom posts and PDFs will remain hidden on later syncs; new source posts can still create tasks. Focus history is kept.</p>
+        <label>Type DELETE ALL TASKS to confirm
+          <input value={deleteConfirmation} onChange={(event) => setDeleteConfirmation(event.target.value)} autoComplete="off" />
+        </label>
+        <div className="button-row end">
+          <button className="button secondary" onClick={() => setDeleteAll(false)}>Keep tasks</button>
+          <button className="button focus" disabled={deletingAll || deleteConfirmation !== "DELETE ALL TASKS"} onClick={async () => {
+            setDeletingAll(true);
+            setError("");
+            try {
+              await request("/tasks", "DELETE", { confirmation: deleteConfirmation });
+              router.replace("/tasks");
+              invalidate();
+              setDeleteAll(false);
+              setDeleteConfirmation("");
+            } catch (e) { setError(errorMessage(e)); }
+            finally { setDeletingAll(false); }
+          }}>{deletingAll ? "Deleting…" : "Delete all tasks"}</button>
+        </div>
+      </Modal>}
     </div>
   );
 }

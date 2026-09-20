@@ -70,6 +70,7 @@ export const taskRecordSchema = z.object({
   status: z.enum(TASK_STATUSES).default("OPEN"),
   completedAt: timestamp.nullable().default(null),
   cancelledAt: timestamp.nullable().default(null),
+  deletedAt: timestamp.nullable().default(null),
   manualPriorityOverride: z.enum(PRIORITIES).nullable().default(null),
   // Effort in minutes. null means unknown, never zero. The effective estimate
   // prefers the student's own figure, then the source's, then the AI's.
@@ -78,6 +79,9 @@ export const taskRecordSchema = z.object({
   aiEstimate: aiEstimateSchema.nullable().default(null),
   details: taskSourceDetailsSchema.nullable().default(null),
   sourceUrl: z.string().nullable().default(null),
+  sourceFileName: z.string().min(1).max(200).nullable().default(null),
+  sourceDocumentId: z.uuid().nullable().default(null),
+  linkedSources: z.array(z.object({ sourceType: z.enum(["manual", "pdf", "classroom"]), sourceRef: z.string(), fileName: z.string().nullable(), documentId: z.uuid().nullable() })).default([]),
   latestChange: latestChangeSchema.nullable().default(null),
   actualMinutes: z.number().int().nonnegative().default(0),
   bookmarked: z.boolean().default(false),

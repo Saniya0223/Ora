@@ -198,6 +198,31 @@ test("filters, search, views, and counts are computed server-side", async () => 
   assert.equal(run({ from: "2026-09-19", to: "2026-09-26" }).tasks.length, 2);
 });
 
+test("completed work leaves All after seven days but remains in Completed history", async () => {
+  const db = standardTables();
+  const task = await createManualTask(db, "tasks", { title: "Finished lab" }, { now, timeZone: "Asia/Kolkata" });
+  await completeTask(db, "tasks", task.taskId, now);
+  const filters = { view: "all", sort: "priority" };
+  const atSixDays = new Date(now.getTime() + 6 * 86_400_000);
+  const atEightDays = new Date(now.getTime() + 8 * 86_400_000);
+  const stored = await getTaskRecord(db, "tasks", task.taskId);
+  assert.equal(filterTasks([toTaskDTO(stored, { ...ctx, now: atSixDays })], filters, atSixDays, "Asia/Kolkata").tasks.length, 1);
+  const oldDto = toTaskDTO(stored, { ...ctx, now: atEightDays });
+  assert.equal(filterTasks([oldDto], filters, atEightDays, "Asia/Kolkata").tasks.length, 0);
+  assert.equal(filterTasks([oldDto], { ...filters, view: "completed" }, atEightDays, "Asia/Kolkata").tasks.length, 1);
+  assert.equal((await getTaskRecord(db, "tasks", task.taskId)).status, "COMPLETED");
+});
+
+test("a recent source deadline change is marked in the list and retains the full detail diff", async () => {
+  const db = standardTables().seed("events", eventRow({ latestChange: { at: now.toISOString(), sourceRef: "c1:coursework:w2",
+    fields: [{ field: "currentDeadline", before: "2026-09-20T18:29:00.000Z", after: "2026-09-21T18:29:00.000Z" }] } }));
+  const [task] = await reconcileTasks(db, tables, now);
+  assert.equal(toTaskDTO(task, ctx).recentSourceChange.label, "Deadline changed");
+  assert.equal(toTaskDTO(task, ctx, { detail: true }).latestChange.fields[0].after, "2026-09-21T18:29:00.000Z");
+  const later = new Date(now.getTime() + 8 * 86_400_000);
+  assert.equal(toTaskDTO(task, { ...ctx, now: later }).recentSourceChange, null);
+});
+
 test("priority is deterministic, explained, and never needs a model", () => {
   const at = (hours) => new Date(now.getTime() + hours * 3_600_000).toISOString();
   assert.deepEqual(calculatePriority({ deadline: at(-1), type: "ASSIGNMENT", remainingMinutes: 30 }, now, 240), { level: "HIGH", reason: "OVERDUE" });

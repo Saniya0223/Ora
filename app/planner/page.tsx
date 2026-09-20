@@ -9,6 +9,7 @@ import {
   addDays,
   clock,
   clock12h,
+  timeRange,
   dateKey,
   daySegments,
   placeOverlaps,
@@ -227,40 +228,33 @@ function PlannerScreen() {
                     key={d}
                     style={{ height, backgroundSize: `100% ${rowHeight}px`, borderLeft: '1px solid var(--line)', background: 'transparent', backgroundImage: `linear-gradient(var(--line) 1px, transparent 1px)` }}
                   >
-                    {segments[index].map((item) => (
-                      <button
-                        className={`calendar-block block-${item.type.toLowerCase()}`}
-                        key={item.id}
-                        style={{
-                          top:
-                            ((item.startMinute - firstHour * 60) / 60) *
-                            rowHeight,
-                          height: Math.max(
-                            42,
-                            ((item.endMinute - item.startMinute) / 60) *
-                              rowHeight -
-                              3,
-                          ),
-                          left: `calc(${(item.column / item.columns) * 100}% + 4px)`,
-                          width: `calc(${100 / item.columns}% - 8px)`,
-                        }}
-                        onClick={() => setSelected(item)}
-                        title={`${item.title}, ${clock12h(item.start, zone)} - ${clock12h(item.end, zone)}${item.location ? `, ${item.location}` : ""}`}
-                      >
-                        <strong>{item.title}</strong>
-                        <span className="block-time">
-                          <span className="time-start">{clock12h(item.start, zone)}</span>
-                          <span className="time-separator">-</span>
-                          <span className="time-end">{clock12h(item.end, zone)}</span>
-                        </span>
-                        {item.location && (
-                          <span>{item.location}</span>
-                        )}
-                        {item.outsidePreferredWindow && (
-                          <span className="block-warning">Outside preferred hours</span>
-                        )}
-                      </button>
-                    ))}
+                    {segments[index].map((item) => {
+                      const height = Math.max(30, ((item.endMinute - item.startMinute) / 60) * rowHeight - 3);
+                      // What a block shows depends on the room it has: title first,
+                      // then time, then room. Full detail stays in the tooltip and panel.
+                      const size = height < 40 ? "xs" : height < 60 ? "sm" : height < 90 ? "md" : "lg";
+                      return (
+                        <button
+                          className={`calendar-block block-${item.type.toLowerCase()}`}
+                          data-size={size}
+                          data-narrow={item.columns > 1 ? "true" : undefined}
+                          key={item.id}
+                          style={{
+                            top: ((item.startMinute - firstHour * 60) / 60) * rowHeight,
+                            height,
+                            left: `calc(${(item.column / item.columns) * 100}% + 4px)`,
+                            width: `calc(${100 / item.columns}% - 8px)`,
+                          }}
+                          onClick={() => setSelected(item)}
+                          title={`${item.title}, ${timeRange(item.start, item.end, zone)}${item.location ? `, ${item.location}` : ""}${item.outsidePreferredWindow ? " (outside preferred hours)" : ""}`}
+                        >
+                          <strong>{item.title}</strong>
+                          <span className="block-time">{timeRange(item.start, item.end, zone)}</span>
+                          {item.location && <span className="block-room">{item.location}</span>}
+                          {item.outsidePreferredWindow && <span className="block-warning">Outside preferred hours</span>}
+                        </button>
+                      );
+                    })}
                   </div>
                 ))}
               </div>

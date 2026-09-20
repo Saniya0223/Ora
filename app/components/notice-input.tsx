@@ -59,7 +59,7 @@ export function NoticeInput({
           text: text.trim(),
         });
         setResult(r);
-        if (r.action !== "IGNORE") setText("");
+        if (r.action !== "IGNORE" && r.action !== "REVIEW") setText("");
         invalidate();
         setStatus("");
       } else {
@@ -208,6 +208,7 @@ export function NoticeInput({
                 UPDATE: "Task updated",
                 CANCEL: "Task cancelled",
                 IGNORE: "No change made",
+                REVIEW: "Needs your review",
               }[result.action]
             }
           </strong>

@@ -7,8 +7,9 @@ import { IngestionError } from "./errors.js";
 import { resolveDeadlineText } from "./relative-date.js";
 import { syncTaskForEvent } from "./tasks.js";
 import { deadlineInstant } from "./time.js";
-import { classroomSourceUrl, sameSource, sameCourse, meaningfulChange } from "./source-truth.js";
-import { DEFAULT_TIME_ZONE, daysBetween, isValidTimeZone, localParts, weekdayOf, zonedInstant } from "./zone.js";
+import { classroomSourceUrl, sameSource, sameCourse, meaningfulChange, syncFailureCategory } from "./source-truth.js";
+import { reviewIdFor, saveReview } from "./reviews.js";
+import { DEFAULT_TIME_ZONE, addDays, daysBetween, isValidTimeZone, localParts, weekdayOf, zonedInstant } from "./zone.js";
 
 export const DEMO_USER_ID = "demo-user";
 export const noticeTextSchema = z.string().trim().min(1).max(12_000);
@@ -22,6 +23,9 @@ const noticeSchema = z.strictObject({
   postedAt: timestamp.nullable().optional(),
   updatedAt: timestamp.nullable().optional(),
   sourceUrl: z.string().nullable().optional(),
+  sourceFileName: z.string().min(1).max(200).optional(),
+  sourceDocumentId: z.uuid().optional(),
+  courseName: z.string().min(1).max(120).optional(),
 });
 const applicabilitySchema = studentProfileSchema.pick({ name: true, program: true, year: true, section: true, timezone: true });
 const normalise = (value) => (value ?? "").trim().replace(/\s+/g, " ").toLocaleLowerCase("en");
@@ -239,6 +243,143 @@ const MODEL_IGNORE_MESSAGES = {
 
 const ignored = (reason, event, changeSummary) => ({ action: "IGNORE", reason, event, changeSummary });
 
+const reviewWords = (value) => new Set(normalise(value).split(/[^\p{L}\p{N}]+/u)
+  .filter((word) => word.length > 1 && !["the", "and", "for", "with", "this", "that", "your", "assignment", "task"].includes(word)));
+// "Quiz 1" and "Quiz 2" are a numbered series, not one task described twice.
+const titleNumbers = (value) => (normalise(value).match(/\d+/g) ?? []).join(",");
+function reviewCandidates(item, events, notice, now) {
+  const words = reviewWords(item?.eventDetails?.title ?? notice.text);
+  const numbers = item?.eventDetails?.title ? titleNumbers(item.eventDetails.title) : "";
+  return events.filter((event) => event.status === "ACTIVE" && sameCourse(event, notice)
+    && (sameSource(event, notice) || event.currentDeadline === null || instantOf(event.currentDeadline) >= now.getTime() - 90 * DAY_MS))
+    .map((event) => {
+      const other = reviewWords(event.title);
+      const shared = [...words].filter((word) => other.has(word)).length;
+      const otherNumbers = titleNumbers(event.title);
+      const distinctNumbers = numbers && otherNumbers && numbers !== otherNumbers;
+      const named = event.eventId === item?.targetEventId;
+      const score = sameSource(event, notice) ? 1 : named ? 0.9 : distinctNumbers ? 0 : shared / Math.max(words.size, other.size, 1);
+      return { event, score, named };
+    }).filter(({ score }) => score >= 0.45).sort((a, b) => b.score - a.score).slice(0, 3)
+    .map(({ event, score, named }) => ({ event, score, why: [
+      ...(notice.sourceType === "classroom" ? ["Same course"] : []),
+      ...(sameSource(event, notice) ? ["Same source post"] : named ? ["Matched by the notice"] : ["Similar title"]),
+      ...(event.currentDeadline === null ? ["No deadline yet"] : []),
+    ] }));
+}
+
+// ---------------------------------------------------------------------------
+// Class-tied deadlines. "Checked in OS class" names a checkpoint, not a due
+// time. The model reports what the notice says (review.classReference); code
+// finds the timetable slot and decides whether the notice was explicit enough
+// to use it. A date is never guessed.
+// ---------------------------------------------------------------------------
+const NOT_SUBJECTS = new Set(["the", "your", "our", "this", "that", "next", "coming", "upcoming", "following", "every", "each", "a", "an", "my", "class", "lecture", "lab", "session", "period"]);
+const GENERIC_WORDS = new Set(["and", "of", "the", "lab", "lecture", "tutorial", "class", "practical"]);
+const OBLIGATION_WORDS = /\b(assignments?|projects?|submissions?|homework|coursework|reports?|records?|notebooks?|worksheets?|lab work)\b/i;
+const CHECKPOINT_WORDS = /\b(check(?:ed|ing)?|graded?|grading|present(?:ed|ation)?|review(?:ed)?|evaluat(?:ed|ion)|assess(?:ed)?|collect(?:ed)?|inspect(?:ed)?|verif(?:y|ied)|bring|brought|carry|ready)\b/i;
+const KIND = "class|lecture|lab|session|period";
+const LEAD = "(?:in|during|at|for|to)\\s+(?:the\\s+|your\\s+|our\\s+)?";
+const subjectWords = (value) => normalise(value).split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+
+// "OS" matches "Operating Systems" (initials) and "os Lab" (a word); "DSA"
+// matches "Data Structures" (its initials lead the acronym).
+export function subjectMatches(reference, subject) {
+  const ref = normalise(reference).replace(/[^\p{L}\p{N}]+/gu, "");
+  if (!ref) return false;
+  const core = subjectWords(subject).filter((word) => !GENERIC_WORDS.has(word));
+  if (core.includes(ref) || core.join("") === ref) return true;
+  const initials = core.map((word) => word[0]).join("");
+  return initials.length >= 2 && (initials === ref || (ref.length > initials.length && ref.startsWith(initials)));
+}
+
+export function classMention(text) {
+  const kindOf = (match, index) => match[index].toLowerCase();
+  let match = new RegExp(`\\b${LEAD}(?:next|coming|upcoming|following)\\s+(?:([A-Za-z][A-Za-z0-9-]{1,14})\\s+)?(${KIND})\\b`, "i").exec(text);
+  if (match) return { subject: match[1] ?? null, explicit: true, kind: kindOf(match, 2), phrase: match[0] };
+  match = new RegExp(`\\b${LEAD}([A-Za-z][A-Za-z0-9-]{1,14})\\s+(${KIND})\\b`, "i").exec(text);
+  if (match && !NOT_SUBJECTS.has(match[1].toLowerCase())) return { subject: match[1], explicit: false, kind: kindOf(match, 2), phrase: match[0] };
+  match = /\bduring\s+(?:the\s+|your\s+|our\s+)?([A-Za-z][A-Za-z0-9-]{1,14})\b/i.exec(text);
+  if (match && !NOT_SUBJECTS.has(match[1].toLowerCase())) return { subject: match[1], explicit: false, kind: null, phrase: match[0], needsTimetable: true };
+  match = new RegExp(`\\b${LEAD}(?:this\\s+)?(${KIND})\\b`, "i").exec(text);
+  if (match) return { subject: null, explicit: false, kind: kindOf(match, 1), phrase: match[0] };
+  return null;
+}
+
+const clock12 = (hhmm) => {
+  const [hours, minutes] = hhmm.split(":").map(Number);
+  return `${((hours + 11) % 12) + 1}:${String(minutes).padStart(2, "0")} ${hours < 12 ? "AM" : "PM"}`;
+};
+
+function nextClassFor(reference, kind, slots, fromMs, timeZone) {
+  if (!reference) return null;
+  const matching = (slots ?? []).filter((slot) => subjectMatches(reference, slot.subject));
+  // "OS class" means the lecture unless the notice says lab.
+  const preferred = matching.filter((slot) => (slot.type === "Lab") === (kind === "lab"));
+  const pool = preferred.length ? preferred : matching;
+  const startDate = localParts(fromMs, timeZone).date;
+  return Array.from({ length: 15 }, (_, offset) => addDays(startDate, offset))
+    .flatMap((date) => pool.filter((slot) => slot.day === weekdayOf(date))
+      .map((slot) => ({ at: zonedInstant(date, slot.startTime, timeZone), local: `${date}T${slot.startTime}`, label: `${slot.day} at ${clock12(slot.startTime)}` })))
+    .filter(({ at }) => at >= fromMs).sort((a, b) => a.at - b.at)[0] ?? null;
+}
+
+function classCheckpoint(item, notice, slots, fromMs, timeZone) {
+  const heard = item?.review?.classReference ?? null;
+  const text = notice.text;
+  const detected = OBLIGATION_WORDS.test(text) && CHECKPOINT_WORDS.test(text) ? classMention(text) : null;
+  if (!heard && !detected) return null;
+  const subject = detected?.subject ?? clean(heard?.subject, 40);
+  const kind = detected?.kind ?? null;
+  const reference = subject ?? notice.courseName ?? null;
+  const nextClass = nextClassFor(reference, kind, slots, fromMs, timeZone);
+  // A bare "during <word>" is a class only when the timetable or course knows the word.
+  if (detected?.needsTimetable && !heard && !nextClass) return null;
+  // Explicit means the notice itself says which occurrence; the model's word alone is not enough.
+  const explicit = detected ? detected.explicit : Boolean(heard?.explicit) && /\b(next|coming|upcoming|following)\b/i.test(text);
+  return { subject, label: subject ?? notice.courseName ?? "class", kind, explicit, nextClass, phrase: detected?.phrase ?? "next class" };
+}
+
+function reviewSpec(item, notice, events, checkpoint, now) {
+  const candidates = reviewCandidates(item, events, notice, now);
+  // A stated deadline is confident: a class mention only matters when the
+  // item would otherwise have no deadline at all.
+  const implicit = checkpoint && item?.action !== "CANCEL" && !item?.eventDetails?.currentDeadline ? checkpoint : null;
+  if (implicit) {
+    const { label, nextClass } = implicit;
+    const reasons = [`The notice says this work will be handled in ${label} class.`];
+    if (nextClass) reasons.push(`Your next ${label} class is ${nextClass.label}.`);
+    if (!implicit.explicit) reasons.push(`The notice does not say "next class".`);
+    reasons.push("No explicit deadline.");
+    const withMatch = candidates.length > 0;
+    const options = withMatch
+      ? [...(nextClass ? ["UPDATE_EXISTING_CLASS_TIME"] : []), "UPDATE_EXISTING", ...(nextClass ? ["CREATE_NEW_CLASS_TIME"] : []), "CREATE_NEW", "IGNORE"]
+      : [...(nextClass ? ["USE_CLASS_TIME"] : []), "KEEP_NO_DEADLINE", "IGNORE"];
+    const recommendedAction = withMatch ? (candidates[0].score >= 0.75 ? "UPDATE_EXISTING" : "CREATE_NEW") : "KEEP_NO_DEADLINE";
+    return { ambiguity: `The ${label} class is a checkpoint, not an explicit deadline.`, reasons, candidates,
+      suggestedDeadline: nextClass?.local ?? null, classLabel: label, options, recommendedAction };
+  }
+  if (item?.review) {
+    const options = item.action === "CANCEL"
+      ? [...(candidates.length ? ["CANCEL"] : []), "IGNORE"]
+      : [...(candidates.length ? ["UPDATE_EXISTING"] : []), "CREATE_NEW", "IGNORE"];
+    if (item.action !== "CANCEL" && !item.eventDetails?.currentDeadline) options.splice(options.length - 1, 0, "KEEP_NO_DEADLINE");
+    // With no task to match, "separate task" and "task without a deadline" are the same choice.
+    if (!candidates.length && options.includes("KEEP_NO_DEADLINE")) options.splice(options.indexOf("CREATE_NEW"), 1);
+    return { ambiguity: clean(item.review.ambiguity, 300) ?? "This source could mean more than one task or deadline.",
+      reasons: (item.review.reasons ?? []).map((reason) => clean(reason, 120)).filter(Boolean).slice(0, 4), candidates,
+      suggestedDeadline: null, classLabel: null, options,
+      recommendedAction: options.includes(item.review.recommendedAction) ? item.review.recommendedAction : options[0] };
+  }
+  if (item?.action === "CREATE" && candidates.length && !candidates.some(({ event }) => sameSource(event, notice))) {
+    return { ambiguity: "This may describe a task you already track.",
+      reasons: ["Similar assignment title", ...(notice.sourceType === "classroom" ? ["Same course"] : [])],
+      candidates, suggestedDeadline: null, classLabel: null, options: ["UPDATE_EXISTING", "CREATE_NEW", "IGNORE"],
+      recommendedAction: candidates[0].score >= 0.75 ? "UPDATE_EXISTING" : "CREATE_NEW" };
+  }
+  return null;
+}
+
 // Shared by the manual, PDF, and Classroom producers. One notice resolves to
 // zero or more items. The response keeps its original shape, describing the
 // first item that changed something, and lists every item under `results`.
@@ -251,6 +392,7 @@ export async function ingestNotice(input, dependencies) {
     throw new IngestionError(400, "INVALID_SOURCE", "The notice source is invalid.");
   }
   const { db, profileTableName, now = () => new Date() } = dependencies;
+  const reviewTableName = dependencies.reviewTableName ?? dependencies.env?.SOURCE_REVIEWS_TABLE;
   const log = dependencies.log ?? defaultLog;
   const receivedAt = now();
   const events = await queryEvents(dependencies);
@@ -258,7 +400,7 @@ export async function ingestNotice(input, dependencies) {
   const revision = noticeRevision(notice);
   const classroom = notice.sourceType === "classroom";
   const sourceEvents = classroom ? events.filter((event) => sameSource(event, notice)) : [];
-  if (classroom && notice.updatedAt && sourceEvents.some((event) => {
+  if (!dependencies.reviewDecision && classroom && notice.updatedAt && sourceEvents.some((event) => {
     const at = event.sourceMeta?.versions?.[notice.sourceRef]?.updatedAt;
     return at && Date.parse(at) > Date.parse(notice.updatedAt);
   })) {
@@ -266,7 +408,7 @@ export async function ingestNotice(input, dependencies) {
   }
 
   // Skip the model entirely for a notice that was already fully ingested.
-  const prior = classroom
+  const prior = dependencies.reviewDecision ? [] : classroom
     ? sourceEvents.filter((event) => event.sourceMeta?.versions?.[notice.sourceRef]?.revision === revision)
     : events.filter((event) => event.eventId === noticeId || event.sourceMeta?.noticeId === noticeId);
   const expected = Math.max(1, ...prior.map((event) => event.sourceMeta?.itemCount ?? 1));
@@ -275,26 +417,62 @@ export async function ingestNotice(input, dependencies) {
   }
 
   const start = receivedAt.getTime();
-  const current = (event) => sameCourse(event, notice) && ((classroom && sameSource(event, notice)) || (event.status === "ACTIVE" && (event.currentDeadline === null
+  const current = (event) => sameCourse(event, notice) && (event.eventId === dependencies.reviewDecision?.targetEventId || (classroom && sameSource(event, notice)) || (event.status === "ACTIVE" && (event.currentDeadline === null
     ? start - Date.parse(event.sourceMeta?.postedAt ?? receivedAt.toISOString()) <= UNDATED_WINDOW_MS
     : instantOf(event.currentDeadline) >= start && instantOf(event.currentDeadline) <= start + 14 * DAY_MS)));
   const profileResult = await db.send(new GetCommand({
     TableName: profileTableName,
     Key: { userId: DEMO_USER_ID },
     // name, year, section, and timezone are all DynamoDB reserved words.
-    ProjectionExpression: "#name, program, #year, #section, #tz",
+    ProjectionExpression: "#name, program, #year, #section, #tz, timetableSlots",
     ExpressionAttributeNames: { "#name": "name", "#year": "year", "#section": "section", "#tz": "timezone" },
     ConsistentRead: true,
   }));
-  const stored = profileResult.Item ? applicabilitySchema.parse(profileResult.Item) : null;
+  const { timetableSlots, ...profileFields } = profileResult.Item ?? {};
+  const stored = profileResult.Item ? applicabilitySchema.parse(profileFields) : null;
   const timeZone = isValidTimeZone(stored?.timezone) ? stored.timezone : DEFAULT_TIME_ZONE;
   const profile = stored ? { name: stored.name, program: stored.program, year: stored.year, section: stored.section } : null;
   const postedAt = notice.postedAt ? Date.parse(notice.postedAt) : start;
+  // Where a class-tied deadline points, from the timetable and the notice (never guessed).
+  const checkpointFor = (item) => (dependencies.reviewDecision ? null
+    : classCheckpoint(item, notice, timetableSlots, Math.max(postedAt, start), timeZone));
 
-  const resolution = await resolveNotice({
+  const queueReview = async (item, index, spec) => {
+    const row = await saveReview(db, reviewTableName, {
+      reviewId: reviewIdFor(notice, index), revision, sourceType: notice.sourceType,
+      sourceRef: notice.sourceRef, sourceUrl: classroomSourceUrl(notice.sourceUrl),
+      sourceFileName: notice.sourceFileName ?? null, sourceDocumentId: notice.sourceDocumentId ?? null,
+      noticeText: notice.text, postedAt: notice.postedAt ?? null, updatedAt: notice.updatedAt ?? null,
+      itemIndex: index, timeZone, item, detectedTitle: clean(item?.eventDetails?.title, 300) ?? notice.text.slice(0, 120),
+      ambiguity: spec.ambiguity, reasons: spec.reasons,
+      candidates: spec.candidates.map(({ event, why }) => ({ eventId: event.eventId, title: event.title, deadline: event.currentDeadline,
+        sourceType: event.sourceType, type: event.type ?? null, why })),
+      suggestedDeadline: spec.suggestedDeadline, classLabel: spec.classLabel ?? null, recommendedAction: spec.recommendedAction, options: spec.options,
+    }, receivedAt);
+    return row.status === "RESOLVED"
+      ? ignored("alreadyProcessed", null, "You already decided how to handle this source update.")
+      : { action: "REVIEW", reason: "needsReview", event: null, reviewId: row.reviewId,
+        changeSummary: row.ambiguity };
+  };
+
+  let resolution = dependencies.reviewDecision ? { results: [dependencies.reviewDecision.item], ignoreReason: null } : await resolveNotice({
     text: notice.text, sourceType: notice.sourceType, sourceRef: notice.sourceRef, events: events.filter(current), profile, now: receivedAt,
     postedAt, updatedAt: notice.updatedAt ? Date.parse(notice.updatedAt) : null, timeZone,
   }, dependencies);
+  const textCheckpoint = !resolution.results.length && reviewTableName ? checkpointFor(null) : null;
+  if (!resolution.results.length && reviewTableName && (textCheckpoint || resolution.ignoreReason === "uncertain")) {
+    // The model saw no clear task, but the source still asks something of the student.
+    const label = textCheckpoint?.label ?? "academic";
+    const item = { action: "CREATE", targetEventId: null, synthetic: true, changeSummary: "Academic obligation needs confirmation.",
+      eventDetails: { title: textCheckpoint ? `${label} assignment` : notice.text.trim().slice(0, 100),
+        type: textCheckpoint ? "Assignment" : "Admin", currentDeadline: null, deadlineText: null,
+        certainty: "tentative", venue: null, estimatedHours: 0,
+        actionSummary: textCheckpoint ? `Assignment will be handled in ${label} class.` : notice.text.trim().slice(0, 300),
+        instructions: [], requirements: [], topics: [], submissionMethod: null, links: [] },
+      ...(!textCheckpoint ? { review: { ambiguity: "The notice does not identify one clear task or deadline.", recommendedAction: "KEEP_NO_DEADLINE", reasons: ["No explicit deadline"] } } : {}) };
+    const spec = reviewSpec(item, notice, events, textCheckpoint, receivedAt);
+    return finish(notice, noticeId, [await queueReview(item, 0, spec)], null, dependencies, log);
+  }
   if (!resolution.results.length) {
     const outcome = { ...ignored("modelIgnored", null, MODEL_IGNORE_MESSAGES[resolution.ignoreReason]), modelIgnoreReason: resolution.ignoreReason };
     return finish(notice, noticeId, [outcome], resolution.ignoreReason, dependencies, log);
@@ -303,10 +481,13 @@ export async function ingestNotice(input, dependencies) {
   const links = sourceLinks(notice.text);
   const context = { text: notice.text, anchorMs: postedAt, timeZone, links, single: resolution.results.length === 1 };
   const creates = resolution.results.filter((item) => item.action === "CREATE").length;
-  const sourceMeta = { noticeId, itemCount: Math.max(1, classroom ? resolution.results.length : creates), postedAt: notice.postedAt ?? receivedAt.toISOString(), updatedAt: notice.updatedAt ?? null,
+  const sourceMeta = { noticeId, itemCount: Math.max(1, classroom ? resolution.results.length : creates, ...sourceEvents.map((event) => event.sourceMeta?.itemCount ?? 1)), postedAt: notice.postedAt ?? receivedAt.toISOString(), updatedAt: notice.updatedAt ?? null,
+    ...(notice.sourceType === "pdf" && notice.sourceFileName ? { fileName: notice.sourceFileName } : {}),
+    ...(notice.sourceType === "pdf" && notice.sourceDocumentId ? { documentId: notice.sourceDocumentId } : {}),
     ...(classroom ? { versions: { [notice.sourceRef]: { revision, updatedAt: notice.updatedAt ?? null } } } : {}),
   };
   context.sourceEvents = sourceEvents;
+  context.forceCreate = Boolean(dependencies.reviewDecision?.forceCreate);
   context.claimed = new Set();
   const outcomes = [];
   // When several existing obligations exist, an unexplained rename must not
@@ -315,12 +496,30 @@ export async function ingestNotice(input, dependencies) {
   context.unmatchedExisting = sourceEvents.filter((event) => !represented.has(event.eventId) && !represented.has(semanticKey(event)));
   let createIndex = 0;
   for (const item of resolution.results) {
-    const index = item.action === "CREATE" ? createIndex++ : null;
+    const index = dependencies.reviewDecision?.itemIndex ?? (item.action === "CREATE" ? createIndex++ : 0);
+    if (!dependencies.reviewDecision && reviewTableName) {
+      const undated = item.action !== "CANCEL" && item.eventDetails && !item.eventDetails.currentDeadline;
+      const checkpoint = undated ? checkpointFor(item) : null;
+      if (checkpoint?.explicit && checkpoint.nextClass) {
+        // "In the next OS class" names the occurrence, so the timetable's next class is the deadline.
+        item.eventDetails = { ...item.eventDetails, currentDeadline: checkpoint.nextClass.local, deadlineText: null, certainty: "confirmed" };
+        log({ code: "DEADLINE_FROM_NEXT_CLASS", sourceRef: notice.sourceRef });
+      }
+      const spec = reviewSpec(item, notice, events, checkpoint, receivedAt);
+      if (spec) { outcomes.push(await queueReview(item, index, spec)); continue; }
+    }
     try {
       outcomes.push(await applyItem(item, { notice, events, current, receivedAt, context, sourceMeta, index, db, tableName: dependencies.tableName, log }));
     } catch (error) {
       if (!(error instanceof IngestionError)) throw error;
-      outcomes.push({ action: "FAILED", reason: null, event: null, changeSummary: error.message, error });
+      if (!dependencies.reviewDecision && reviewTableName && syncFailureCategory(error.code) === "needsReview") {
+        const candidates = reviewCandidates(item, events, notice, receivedAt);
+        outcomes.push(await queueReview(item, index, { ambiguity: error.message,
+          reasons: ["The source could not be matched safely"], candidates, suggestedDeadline: null,
+          options: item.action === "CANCEL" ? [...(candidates.length ? ["CANCEL"] : []), "IGNORE"]
+            : [...(candidates.length ? ["UPDATE_EXISTING"] : []), "CREATE_NEW", "IGNORE"],
+          recommendedAction: candidates.length ? item.action === "CANCEL" ? "CANCEL" : "UPDATE_EXISTING" : item.action === "CANCEL" ? "IGNORE" : "CREATE_NEW" }));
+      } else outcomes.push({ action: "FAILED", reason: null, event: null, changeSummary: error.message, error });
     }
   }
   // All items failing is a failed notice, reported exactly as before. Some
@@ -345,6 +544,12 @@ async function applyItem(item, { notice, events, current, receivedAt, context, s
       if (version?.updatedAt && notice.updatedAt && Date.parse(version.updatedAt) > Date.parse(notice.updatedAt)) return target;
       change.sourceMeta = metadata(target);
       change.sourceUrl = classroomSourceUrl(notice.sourceUrl) ?? target.sourceUrl ?? null;
+    } else if (notice.sourceRef && notice.sourceRef !== target.sourceRef) {
+      const linked = target.linkedSources ?? [];
+      if (!linked.some((entry) => entry.sourceType === notice.sourceType && entry.sourceRef === notice.sourceRef)) {
+        change.linkedSources = [...linked, { sourceType: notice.sourceType, sourceRef: notice.sourceRef,
+          fileName: notice.sourceFileName ?? null, documentId: notice.sourceDocumentId ?? null }];
+      }
     }
     const latestChange = meaningfulChange(target, { ...target, ...change }, receivedAt.toISOString(), notice.sourceRef);
     if (meaningful && latestChange) change.latestChange = latestChange;
@@ -371,7 +576,7 @@ async function applyItem(item, { notice, events, current, receivedAt, context, s
   // Exact source identity takes precedence over a model's CREATE decision.
   // Semantic keys survive reordering; explicit model targets handle renames.
   let sourceTarget;
-  if (notice.sourceType === "classroom" && action === "CREATE") {
+  if (notice.sourceType === "classroom" && action === "CREATE" && !context.forceCreate) {
     const candidates = context.sourceEvents.filter((event) => !context.claimed.has(event.eventId));
     const sameName = candidates.filter((event) => semanticKey(event) === semanticKey(fields));
     const exactOccurrence = sameName.filter((event) => instantOf(event.currentDeadline) === instantOf(fields.currentDeadline));

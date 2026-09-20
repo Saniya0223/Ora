@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="540" height="460" viewBox="0 0 540 460" fill="none">
+  <defs>
+    <linearGradient id="paper" x1="230" y1="92" x2="360" y2="391" gradientUnits="userSpaceOnUse"><stop stop-color="#fffefb"/><stop offset="1" stop-color="#faf6ef"/></linearGradient>
+    <linearGradient id="olive" x1="180" y1="88" x2="420" y2="170" gradientUnits="userSpaceOnUse"><stop stop-color="#718357"/><stop offset="1" stop-color="#4b633d"/></linearGradient>
+    <linearGradient id="cup" x1="99" y1="306" x2="152" y2="369" gradientUnits="userSpaceOnUse"><stop stop-color="#f4f1e1"/><stop offset="1" stop-color="#e3e2ca"/></linearGradient>
+    <linearGradient id="leaf" x1="477" y1="331" x2="535" y2="451" gradientUnits="userSpaceOnUse"><stop stop-color="#9ba980"/><stop offset="1" stop-color="#74885d"/></linearGradient>
+    <filter id="shadow" x="-30%" y="-25%" width="170%" height="175%"><feDropShadow dx="0" dy="12" stdDeviation="10" flood-color="#70543b" flood-opacity=".13"/></filter>
+    <filter id="soft" x="-30%" y="-30%" width="170%" height="180%"><feDropShadow dx="1" dy="5" stdDeviation="4" flood-color="#70543b" flood-opacity=".12"/></filter>
+  </defs>
+  <path d="M161 96c22-57 84-56 106-39 31 25 73-3 108 22 59 43 33 96 46 139 16 52 39 102-24 142-62 40-151 24-175 3-47-40-124-31-124-106 0-68 40-100 63-161Z" fill="#f6e7dd" opacity=".65"/>
+  <ellipse cx="285" cy="415" rx="209" ry="24" fill="#e8dfcf" opacity=".3"/>
+  <!-- A small stack of books and a warm mug. -->
+  <g filter="url(#soft)">
+    <path d="m56 375 122-22 55 26-135 29-39-16c-10-3-12-12-3-17Z" fill="#b76b51"/>
+    <path d="m64 377 113-19 49 21-127 25-35-14Z" fill="#f5eee0"/>
+    <path d="m61 389 38 16 126-25v10L98 418l-42-18c-8-5-6-16 5-11Z" fill="#c08167"/>
+    <path d="m99 405 125-25M102 411l120-26" stroke="#dbccb7" stroke-width="2"/>
+    <path d="m68 349 112-21 49 24-122 25-39-13c-8-4-8-11 0-15Z" fill="#66794c"/>
+    <path d="m75 350 106-18 42 20-116 22-32-13Z" fill="#f4efe0"/>
+    <path d="m71 359 35 15 117-22v10l-117 25-37-15c-9-3-9-15 2-13Z" fill="#718357"/>
+    <path d="m112 377 104-21M112 381l104-21" stroke="#d4d4b6" stroke-width="2"/>
+    <path d="M151 308c26-6 36 4 32 21-3 13-19 20-32 12" stroke="#536c42" stroke-width="10"/>
+    <path d="m93 299 64 2-3 43c-1 16-55 19-58 0Z" fill="url(#cup)"/>
+    <ellipse cx="125" cy="301" rx="33" ry="7" fill="#708055"/>
+    <ellipse cx="125" cy="299" rx="28" ry="4.5" fill="#374f2f"/>
+    <circle cx="125" cy="329" r="16" fill="#779363"/>
+    <path d="M115 319c17 0 22 12 15 23-1-12-5-15-15-23Z" fill="#f6eedc"/>
+    <path d="M111 329c1 9 7 15 18 15-4-9-10-14-18-15Z" fill="#ca8463"/>
+  </g>
+  <path d="M116 282c-12-14 8-15 0-32M131 278c13-17-9-21-1-37" stroke="#dca184" stroke-width="4.5" stroke-linecap="round" opacity=".65"/>
+  <!-- The paper planner uses the same olive and terracotta palette as Ora. -->
+  <g transform="rotate(6 294 249)">
+    <rect x="164" y="92" width="248" height="301" rx="21" fill="url(#paper)" filter="url(#shadow)"/>
+    <path d="M185 92h206c12 0 21 9 21 21v23H164v-23c0-12 9-21 21-21Z" fill="url(#olive)"/>
+    <rect x="197" y="78" width="13" height="40" rx="6.5" fill="#ece8d8"/>
+    <rect x="369" y="78" width="13" height="40" rx="6.5" fill="#ece8d8"/>
+    <path d="M202 85v24M374 85v24" stroke="#faf7ed" stroke-width="3" stroke-linecap="round"/>
+    <rect x="180" y="154" width="216" height="46" rx="9" fill="#edf0e3"/>
+    <rect x="191" y="165" width="24" height="24" rx="5" fill="#789366"/>
+    <path d="m197 177 5 5 8-11" stroke="#fffdf4" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="227" y="181" font-family="Arial, sans-serif" font-size="15" font-weight="600" fill="#384831">Class</text>
+    <path d="M320 179h60" stroke="#d9dece" stroke-width="8" stroke-linecap="round"/>
+    <rect x="180" y="210" width="216" height="46" rx="9" fill="#f6f0e4"/>
+    <rect x="191" y="221" width="24" height="24" rx="5" fill="#dda940"/>
+    <path d="m197 233 5 5 8-11" stroke="#fffdf4" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="227" y="237" font-family="Arial, sans-serif" font-size="15" font-weight="600" fill="#384831">Assignment</text>
+    <path d="M333 235h47" stroke="#e5ddcf" stroke-width="8" stroke-linecap="round"/>
+    <rect x="180" y="266" width="216" height="46" rx="9" fill="#fbefe7"/>
+    <rect x="191" y="277" width="24" height="24" rx="5" fill="#db947a"/>
+    <path d="m197 289 5 5 8-11" stroke="#fffdf4" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="227" y="293" font-family="Arial, sans-serif" font-size="15" font-weight="600" fill="#384831">Lab</text>
+    <path d="M320 291h60" stroke="#e8dbd0" stroke-width="8" stroke-linecap="round"/>
+    <rect x="180" y="322" width="216" height="46" rx="9" fill="#f4efea"/>
+    <rect x="191" y="333" width="24" height="24" rx="5" fill="#b5abba"/>
+    <text x="227" y="349" font-family="Arial, sans-serif" font-size="15" font-weight="600" fill="#384831">Personal time</text>
+    <path d="M341 347h39" stroke="#e4dcd6" stroke-width="8" stroke-linecap="round"/>
+  </g>
+  <!-- Quiet handwritten accents and a note. -->
+  <path d="m144 66-14-17m32 9-4-23m-27 54-24-5" stroke="#bd6547" stroke-width="4" stroke-linecap="round"/>
+  <path d="M471 132c0 25-16 42-34 47m0 0 13 4m-13-4 7-13" stroke="#3f5f3e" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <g transform="rotate(-3 455 272)" filter="url(#soft)">
+    <path d="M429 224h70v83l-17 17h-53Z" fill="#f8e0cc"/>
+    <path d="m482 324 17-17h-17Z" fill="#edcdb7"/>
+    <text x="464" y="247" text-anchor="middle" font-family="Georgia, serif" font-size="17" font-style="italic" fill="#516143">Plan</text>
+    <text x="464" y="269" text-anchor="middle" font-family="Georgia, serif" font-size="17" font-style="italic" fill="#516143">Focus</text>
+    <text x="464" y="291" text-anchor="middle" font-family="Georgia, serif" font-size="17" font-style="italic" fill="#516143">Achieve</text>
+    <path d="m464 301 2 5 5 2-5 2-2 5-2-5-5-2 5-2Z" fill="#d4a34c"/>
+  </g>
+  <path d="M435 355c14 3 15-16 6-14-14 3 0 30 22 11" stroke="#6f8359" stroke-width="3" stroke-linecap="round"/>
+  <g opacity=".95">
+    <path d="M511 458c-14-64-9-102 24-126 18 35 1 77-24 126Z" fill="url(#leaf)"/>
+    <path d="M507 458c-16-41-38-65-66-62 5 33 28 47 66 62Z" fill="#8d9f78"/>
+    <path d="M518 460c2-30 11-54 34-63-1 27-12 46-34 63Z" fill="#a8b58e"/>
+    <path d="M509 460c6-42 12-68 23-96m-24 89-42-40m53 37 24-36" stroke="#607c4d" stroke-width="3" stroke-linecap="round"/>
+  </g>
+</svg>

@@ -244,7 +244,13 @@ Respond ONLY in this strict JSON format, with the keys in this order, no preambl
       "requirements": [string],
       "topics": [string],
       "submissionMethod": string or null,
-      "links": [{ "label": string or null, "url": string }]
+      "links": [{ "label": string or null, "url": string }],
+      "review": null, or, only when something is genuinely uncertain (see the review rule), {
+        "ambiguity": one short sentence saying what is uncertain,
+        "reasons": [up to 3 short product-level reasons, e.g. "Same course", "No explicit deadline"],
+        "recommendedAction": "UPDATE_EXISTING" | "CREATE_NEW" | "KEEP_NO_DEADLINE" | "IGNORE" | "CANCEL",
+        "classReference": null, or { "subject": the course or subject named (e.g. "OS") or null when it only says "class", "explicit": true only if the notice names a specific occurrence such as "next class" or "the next lecture" }
+      }
     }
   ]
 }

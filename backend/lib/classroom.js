@@ -168,6 +168,8 @@ export async function syncClassroom({ db, ai, bedrock, env, Classroom = classroo
         text: classroomText(course, item, kind), sourceType: "classroom", sourceRef,
         postedAt: validTime(item.creationTime), updatedAt: validTime(item.updateTime),
         sourceUrl: classroomSourceUrl(item.alternateLink),
+        // Lets a bare "class" or "next lecture" resolve against this course's timetable slot.
+        ...(courseName ? { courseName } : {}),
       };
       const revision = noticeRevision(notice);
       if (reviews.get(sourceRef)?.revision === revision || processed.get(sourceRef)?.revision === revision) {
@@ -186,14 +188,19 @@ export async function syncClassroom({ db, ai, bedrock, env, Classroom = classroo
         const outcome = await ingestNotice(notice, { db, ai, bedrock, env, tableName: env.ACADEMIC_EVENTS_TABLE, profileTableName: env.STUDENT_PROFILE_TABLE, modelId: env.BEDROCK_MODEL_ID, now, taskContext: { courseName } });
         result.processed++;
         count(result, outcome);
+        const pendingReviews = (outcome.results ?? []).filter((entry) => entry.action === "REVIEW");
         // Some items of the post failed: keep the watermark so a replay, which
         // skips what already landed, fills the gap.
+        if (pendingReviews.length) {
+          reviews.set(sourceRef, { sourceRef, revision, updatedAt: notice.updatedAt ?? now().toISOString(),
+            code: "NEEDS_REVIEW", sourceUrl: notice.sourceUrl, reviewId: pendingReviews[0].reviewId });
+        }
         if (outcome.partial) {
           result.failed++;
           const failures = outcome.results.filter((entry) => entry.action === "FAILED");
           const retryable = failures.find((entry) => syncFailureCategory(entry.code) !== "needsReview");
           recordFailure((retryable ?? failures[0]).code);
-        } else {
+        } else if (!pendingReviews.length) {
           reviews.delete(sourceRef);
           processed.set(sourceRef, { sourceRef, revision });
         }
@@ -233,7 +240,7 @@ export async function syncClassroom({ db, ai, bedrock, env, Classroom = classroo
     }
     const reviews = courseReviews.get(courseId);
     result.needsReview += reviews.length;
-    result.reviewItems.push(...reviews.map(({ sourceRef, code, sourceUrl }) => ({ courseId, sourceRef, code, sourceUrl })));
+    result.reviewItems.push(...reviews.map(({ sourceRef, code, sourceUrl, reviewId }) => ({ courseId, sourceRef, code, sourceUrl, ...(reviewId ? { reviewId } : {}) })));
   }
   // Label the connected account once; a failure here never fails the sync.
   if (!current.classroomAccount) {

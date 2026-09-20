@@ -13,6 +13,7 @@ export function tableNames(env) {
     profile: env.STUDENT_PROFILE_TABLE,
     events: env.ACADEMIC_EVENTS_TABLE,
     syncState: env.CLASSROOM_SYNC_STATE_TABLE,
+    reviews: env.SOURCE_REVIEWS_TABLE,
   };
 }
 

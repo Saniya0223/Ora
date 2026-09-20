@@ -116,7 +116,7 @@ test("errors are consistent and frontend-safe", async () => {
   assert.equal(outage.body.error.code, "SERVICE_UNAVAILABLE");
 });
 
-test("source-backed tasks cannot be deleted or have source fields edited over HTTP", async () => {
+test("source-backed tasks can be suppressed without reappearing, while source fields stay read-only", async () => {
   const db = standardTables().seed("profiles", profile()).seed("events", {
     userId: "demo-user", eventId: "33333333-3333-5333-8333-333333333333", title: "Assignment 1", type: "Assignment",
     currentDeadline: "2026-09-20T18:29:00.000Z", venue: null, estimatedHours: 0, status: "ACTIVE",
@@ -126,9 +126,34 @@ test("source-backed tasks cannot be deleted or have source fields edited over HT
   const list = await call("GET", "/tasks");
   assert.equal(list.body.tasks[0].isSourceBacked, true, "existing events are backfilled into Tasks on read");
   const id = list.body.tasks[0].id;
-  assert.equal((await call("DELETE", `/tasks/${id}`)).body.error.code, "SOURCE_MANAGED");
   assert.equal((await call("PATCH", `/tasks/${id}`, { deadline: "2026-10-01T10:00" })).body.error.code, "SOURCE_MANAGED");
   assert.equal((await call("PATCH", `/tasks/${id}`, { notes: "fine" })).status, 200);
+  assert.equal((await call("DELETE", `/tasks/${id}`)).status, 200);
+  assert.equal((await call("GET", `/tasks/${id}`)).status, 404);
+  assert.equal((await call("GET", "/tasks")).body.tasks.length, 0, "reconciliation does not recreate a deleted source task");
+  assert.ok(db.get("tasks", { userId: "demo-user", taskId: id }).deletedAt, "the source task keeps a suppression tombstone");
+  db.seed("events", { ...db.all("events")[0], currentDeadline: "2026-09-24T18:29:00.000Z" });
+  assert.equal((await call("GET", "/tasks")).body.tasks.length, 0, "a later source deadline edit also respects suppression");
+});
+
+test("delete all requires exact confirmation and suppresses source tasks across reconciliation", async () => {
+  const db = standardTables().seed("profiles", profile()).seed("events", {
+    userId: "demo-user", eventId: "44444444-4444-5444-8444-444444444444", title: "Source assignment", type: "Assignment",
+    currentDeadline: "2026-09-25T18:00:00.000Z", venue: null, estimatedHours: 0, status: "ACTIVE",
+    sourceType: "classroom", sourceRef: "c1:coursework:delete-all", priorityScore: 0, changeHistory: [],
+  });
+  const call = api(db);
+  const manual = await call("POST", "/tasks", { title: "Manual note" });
+  assert.equal(manual.status, 201);
+  assert.equal((await call("DELETE", "/tasks", { confirmation: "delete all" })).status, 400);
+  assert.equal((await call("GET", "/tasks")).body.tasks.length, 2);
+  const result = await call("DELETE", "/tasks", { confirmation: "DELETE ALL TASKS" });
+  assert.equal(result.status, 200);
+  assert.equal(result.body.deleted, 2);
+  assert.equal((await call("GET", "/tasks")).body.tasks.length, 0);
+  assert.equal(db.all("tasks").length, 1, "only the source tombstone remains");
+  assert.ok(db.all("tasks")[0].deletedAt);
+  assert.equal(db.all("events").length, 1, "source truth remains for future revisions");
 });
 
 test("planning preferences save, load, validate, and reach the scheduler", async () => {

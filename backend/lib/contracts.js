@@ -68,7 +68,7 @@ export const syncResultSchema = z.strictObject({
   validationFailed: count.optional(),
   raceSkipped: count.optional(),
   needsReview: count.optional(),
-  reviewItems: z.array(z.object({ courseId: identifier, sourceRef: identifier, code: identifier, sourceUrl: z.string().nullable() })).optional(),
+  reviewItems: z.array(z.object({ courseId: identifier, sourceRef: identifier, code: identifier, sourceUrl: z.string().nullable(), reviewId: z.uuid().optional() })).optional(),
 });
 
 export const classroomSyncStatusSchema = z.strictObject({
@@ -148,6 +148,9 @@ export const eventSourceMetaSchema = z.strictObject({
   itemCount: z.number().int().positive(),
   postedAt: timestamp.nullable(),
   updatedAt: timestamp.nullable(),
+  fileName: z.string().min(1).max(200).optional(),
+  documentId: z.uuid().optional(),
+  linkedSources: z.array(z.strictObject({ sourceType: z.enum(["manual", "pdf", "classroom"]), sourceRef: z.string(), fileName: z.string().nullable(), documentId: z.uuid().nullable() })).optional(),
   itemKey: z.string().optional(),
   versions: z.record(z.string(), z.strictObject({ revision: z.string(), updatedAt: timestamp.nullable() })).optional(),
 });
@@ -177,6 +180,7 @@ export const academicEventSchema = z.strictObject({
   details: eventDetailsSchema.optional(),
   sourceMeta: eventSourceMetaSchema.optional(),
   sourceUrl: z.string().nullable().optional(),
+  linkedSources: z.array(z.strictObject({ sourceType: z.enum(["manual", "pdf", "classroom"]), sourceRef: z.string(), fileName: z.string().nullable(), documentId: z.uuid().nullable() })).optional(),
   latestChange: latestChangeSchema.nullable().optional(),
 });
 
@@ -185,7 +189,7 @@ export const classroomSyncStateSchema = z.strictObject({
   courseId: identifier,
   lastSyncedAt: timestamp,
   courseName: z.string().nullable().optional(),
-  reviewItems: z.array(z.strictObject({ sourceRef: identifier, revision: z.string(), updatedAt: timestamp, code: identifier, sourceUrl: z.string().nullable() })).optional(),
+  reviewItems: z.array(z.strictObject({ sourceRef: identifier, revision: z.string(), updatedAt: timestamp, code: identifier, sourceUrl: z.string().nullable(), reviewId: z.uuid().optional() })).optional(),
   processedItems: z.array(z.strictObject({ sourceRef: identifier, revision: z.string() })).optional(),
 });
 
@@ -265,8 +269,8 @@ const isRecord = (value) => Boolean(value) && typeof value === "object" && !Arra
 // `eventDetails` (v1 and early v2) is still accepted.
 const unflatten = (value) => {
   if (!isRecord(value) || "eventDetails" in value || !("title" in value)) return value;
-  const { action, targetEventId, changeSummary, ...eventDetails } = value;
-  return { action, targetEventId, changeSummary, eventDetails };
+  const { action, targetEventId, changeSummary, review, ...eventDetails } = value;
+  return { action, targetEventId, changeSummary, review, eventDetails };
 };
 const batchItem = z.preprocess(unflatten, z.object({
   action: z.enum(["CREATE", "UPDATE", "CANCEL", "IGNORE"]),
@@ -274,6 +278,13 @@ const batchItem = z.preprocess(unflatten, z.object({
   // Validated per action below: CANCEL and IGNORE may carry anything or nothing.
   eventDetails: z.unknown().optional(),
   changeSummary: z.string().default(""),
+  review: z.object({
+    ambiguity: z.string().max(300),
+    recommendedAction: z.enum(["UPDATE_EXISTING", "CREATE_NEW", "USE_CLASS_TIME", "KEEP_NO_DEADLINE", "IGNORE", "CANCEL"]).optional(),
+    reasons: z.array(z.string().max(120)).max(4).optional(),
+    // A class-tied deadline: the model names what the notice says, code finds the timetable slot.
+    classReference: z.object({ subject: z.string().max(40).nullable().optional(), explicit: z.boolean().default(false) }).nullable().optional(),
+  }).nullable().optional(),
 })).superRefine((item, context) => {
   // CANCEL reads nothing but its target, so it may omit details.
   if ((item.action === "CREATE" || item.action === "UPDATE") && !batchDetails.safeParse(item.eventDetails).success) {

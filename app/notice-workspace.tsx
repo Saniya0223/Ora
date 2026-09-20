@@ -18,7 +18,7 @@ type AcademicEvent = {
 };
 
 type IngestionResult = {
-  action: "CREATE" | "UPDATE" | "CANCEL" | "IGNORE";
+  action: "CREATE" | "UPDATE" | "CANCEL" | "IGNORE" | "REVIEW";
   event: AcademicEvent | null;
   changeSummary: string;
 };
@@ -90,9 +90,9 @@ export default function NoticeWorkspace({ revision, onChange }: { revision: numb
         body: JSON.stringify({ text: text.trim() }), signal: controller.signal,
       });
       const next: IngestionResult = await readResponse(response);
-      if (!["CREATE", "UPDATE", "CANCEL", "IGNORE"].includes(next.action)
+      if (!["CREATE", "UPDATE", "CANCEL", "IGNORE", "REVIEW"].includes(next.action)
         || typeof next.changeSummary !== "string"
-        || (next.action !== "IGNORE" && !next.event)) {
+        || (!["IGNORE", "REVIEW"].includes(next.action) && !next.event)) {
         throw new Error("The result could not be confirmed. Refresh your events before retrying.");
       }
       setResult(next);
@@ -104,7 +104,7 @@ export default function NoticeWorkspace({ revision, onChange }: { revision: numb
         });
       }
       // Keep ignored text available for clarification; preserve all text on failure.
-      if (next.action !== "IGNORE") setText("");
+      if (next.action !== "IGNORE" && next.action !== "REVIEW") setText("");
       if (next.action !== "IGNORE") onChange();
     } catch (cause) {
       setError(controller.signal.aborted
@@ -118,7 +118,7 @@ export default function NoticeWorkspace({ revision, onChange }: { revision: numb
   }
 
   const sortedEvents = [...events].sort((left, right) => left.currentDeadline.localeCompare(right.currentDeadline));
-  const actionLabel = result && ({ CREATE: "Event added", UPDATE: "CampusFlow detected a change", CANCEL: "Event cancelled", IGNORE: "No change made" })[result.action];
+  const actionLabel = result && ({ CREATE: "Event added", UPDATE: "CampusFlow detected a change", CANCEL: "Event cancelled", IGNORE: "No change made", REVIEW: "Needs your review" })[result.action];
 
   return (
     <div className="mt-10 grid gap-12 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)]">

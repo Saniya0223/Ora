@@ -113,6 +113,7 @@ Resources:
           ACADEMIC_EVENTS_TABLE: !Ref AcademicEvents
           STUDENT_PROFILE_TABLE: !Ref StudentProfile
           TASKS_TABLE: !Ref Tasks
+          SOURCE_REVIEWS_TABLE: !Ref SourceReviews
           UPLOAD_BUCKET: !Ref UploadBucket
           AI_PROVIDER: !Ref AIProvider
           OLLAMA_BASE_URL: ''
@@ -130,6 +131,9 @@ Resources:
                 - dynamodb:PutItem
                 - dynamodb:UpdateItem
               Resource: !GetAtt AcademicEvents.Arn
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:UpdateItem, dynamodb:Query]
+              Resource: !GetAtt SourceReviews.Arn
             - Effect: Allow
               Action: dynamodb:GetItem
               Resource: !GetAtt StudentProfile.Arn
@@ -259,6 +263,7 @@ Resources:
           STUDENT_PROFILE_TABLE: !Ref StudentProfile
           ACADEMIC_EVENTS_TABLE: !Ref AcademicEvents
           TASKS_TABLE: !Ref Tasks
+          SOURCE_REVIEWS_TABLE: !Ref SourceReviews
           AI_PROVIDER: !Ref AIProvider
           OLLAMA_BASE_URL: ''
           OLLAMA_MODEL: qwen3:8b
@@ -288,6 +293,9 @@ Resources:
             - Effect: Allow
               Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:UpdateItem, dynamodb:Query]
               Resource: !GetAtt AcademicEvents.Arn
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:UpdateItem, dynamodb:Query]
+              Resource: !GetAtt SourceReviews.Arn
             - Effect: Allow
               Action: [dynamodb:GetItem, dynamodb:PutItem]
               Resource: !GetAtt Tasks.Arn
@@ -328,6 +336,12 @@ Resources:
             ApiId: !Ref CampusFlowApi
             Path: /documents/{jobId}
             Method: GET
+        DocumentDownload:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CampusFlowApi
+            Path: /documents/{jobId}/download
+            Method: GET
         TimetableSlotEdit:
           Type: HttpApi
           Properties:
@@ -359,6 +373,7 @@ Resources:
           ACADEMIC_EVENTS_TABLE: !Ref AcademicEvents
           CLASSROOM_SYNC_STATE_TABLE: !Ref ClassroomSyncState
           TASKS_TABLE: !Ref Tasks
+          SOURCE_REVIEWS_TABLE: !Ref SourceReviews
           AI_PROVIDER: !Ref AIProvider
           BEDROCK_MODEL_ID: !If [BedrockConfigured, !Ref BedrockModelId, '']
           GROQ_API_KEY: !If [GroqConfigured, !Ref GroqApiKey, '']
@@ -371,6 +386,9 @@ Resources:
             - Effect: Allow
               Action: [dynamodb:Query, dynamodb:GetItem, dynamodb:PutItem, dynamodb:UpdateItem]
               Resource: !GetAtt AcademicEvents.Arn
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:UpdateItem, dynamodb:Query]
+              Resource: !GetAtt SourceReviews.Arn
             - Effect: Allow
               Action: [dynamodb:GetItem, dynamodb:PutItem]
               Resource: !GetAtt ClassroomSyncState.Arn
@@ -404,6 +422,7 @@ Resources:
           ACADEMIC_EVENTS_TABLE: !Ref AcademicEvents
           CLASSROOM_SYNC_STATE_TABLE: !Ref ClassroomSyncState
           TASKS_TABLE: !Ref Tasks
+          SOURCE_REVIEWS_TABLE: !Ref SourceReviews
           AI_PROVIDER: !Ref AIProvider
           OLLAMA_BASE_URL: ''
           OLLAMA_MODEL: qwen3:8b
@@ -422,6 +441,9 @@ Resources:
             - Effect: Allow
               Action: [dynamodb:Query, dynamodb:GetItem, dynamodb:PutItem, dynamodb:UpdateItem]
               Resource: !GetAtt AcademicEvents.Arn
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:UpdateItem, dynamodb:Query]
+              Resource: !GetAtt SourceReviews.Arn
             - Effect: Allow
               Action: [dynamodb:GetItem, dynamodb:PutItem]
               Resource: !GetAtt ClassroomSyncState.Arn
@@ -452,6 +474,7 @@ Resources:
           ACADEMIC_EVENTS_TABLE: !Ref AcademicEvents
           CLASSROOM_SYNC_STATE_TABLE: !Ref ClassroomSyncState
           TASKS_TABLE: !Ref Tasks
+          SOURCE_REVIEWS_TABLE: !Ref SourceReviews
           FOCUS_SESSIONS_TABLE: !Ref FocusSessions
           SCHEDULE_BLOCKS_TABLE: !Ref ScheduleBlocks
           UPLOAD_BUCKET: !Ref UploadBucket
@@ -472,6 +495,12 @@ Resources:
             TableName: !Ref AcademicEvents
         - DynamoDBReadPolicy:
             TableName: !Ref ClassroomSyncState
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SourceReviews
+        - Statement:
+            - Effect: Allow
+              Action: dynamodb:UpdateItem
+              Resource: !GetAtt ClassroomSyncState.Arn
         - Statement:
             - Effect: Allow
               Action: [dynamodb:GetItem, dynamodb:UpdateItem]
@@ -495,6 +524,9 @@ Resources:
         TasksCreate:
           Type: HttpApi
           Properties: { ApiId: !Ref CampusFlowApi, Path: /tasks, Method: POST }
+        TasksDeleteAll:
+          Type: HttpApi
+          Properties: { ApiId: !Ref CampusFlowApi, Path: /tasks, Method: DELETE }
         TaskRoutes:
           Type: HttpApi
           Properties: { ApiId: !Ref CampusFlowApi, Path: '/tasks/{proxy+}', Method: ANY }
@@ -525,6 +557,12 @@ Resources:
         Sources:
           Type: HttpApi
           Properties: { ApiId: !Ref CampusFlowApi, Path: /sources, Method: GET }
+        ReviewsList:
+          Type: HttpApi
+          Properties: { ApiId: !Ref CampusFlowApi, Path: /reviews, Method: GET }
+        ReviewResolve:
+          Type: HttpApi
+          Properties: { ApiId: !Ref CampusFlowApi, Path: '/reviews/{reviewId}/resolve', Method: POST }
 
   ClassroomSchedulerRole:
     Type: AWS::IAM::Role
@@ -605,6 +643,24 @@ Resources:
         - AttributeName: userId
           KeyType: HASH
         - AttributeName: courseId
+          KeyType: RANGE
+
+  SourceReviews:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: SourceReviews
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: userId
+          AttributeType: S
+        - AttributeName: reviewId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: userId
+          KeyType: HASH
+        - AttributeName: reviewId
           KeyType: RANGE
 
   ScheduleBlocks:

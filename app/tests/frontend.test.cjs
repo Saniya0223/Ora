@@ -32,7 +32,7 @@ test("sync messages distinguish persistent review from temporary, validation, ra
   const base = { failed: 0, truncated: false };
   const { syncExplanation } = sourcePresentation;
   const review = syncExplanation({ ...base, needsReview: 1 });
-  assert.match(review, /could not be matched safely/);
+  assert.match(review, /need your decision in Updates needing review/);
   assert.doesNotMatch(review, /Sync again|Retry sync/);
   assert.match(syncExplanation({ ...base, temporaryFailed: 1 }), /temporary service issue/);
   assert.match(syncExplanation({ ...base, validationFailed: 1 }), /interpreted reliably/);
@@ -183,12 +183,12 @@ test("sync summary speaks to students and keeps raw counters out of the headline
   const source = (sync, health = "HEALTHY") => ({ connection: "CONNECTED", health, account: null, selectedCourses: [], sync: { status: "SUCCESS", trigger: "manual", stale: false, lastAttemptAt: null, lastFinishedAt: null, lastSuccessfulSyncAt: "2026-09-20T09:58:00Z", lastErrorCode: null, lastResult: zero, ...sync } });
   const upToDate = syncSummary(source({}), now);
   assert.equal(upToDate.title, "You're up to date");
-  assert.match(upToDate.detail, /2 min ago/);
+  assert.equal(upToDate.detail, "No new Classroom changes", "the primary card does not show unnecessary last-checked text");
   assert.doesNotMatch(JSON.stringify(upToDate), /0 created|ignored/);
   const changed = syncSummary(source({ lastResult: { ...zero, created: 1, updated: 1 } }), now);
   assert.deepEqual(changed.changes, ["1 new task added", "1 task updated"]);
   assert.equal(syncSummary(source({ status: "SYNCING" }), now).tone, "busy");
-  assert.equal(syncSummary(source({ status: "PARTIAL", lastResult: { ...zero, needsReview: 1 } }), now).title, "1 Classroom item needs review");
+  assert.equal(syncSummary(source({ status: "PARTIAL", lastResult: { ...zero, needsReview: 1 } }), now).title, "1 Classroom update needs review");
   assert.match(syncSummary(source({ status: "PARTIAL", lastResult: { ...zero, temporaryFailed: 2 } }), now).detail, /try again shortly/);
   assert.equal(syncSummary(source({}, "REAUTH_REQUIRED"), now).tone, "error");
   assert.equal(timeAgo("2026-09-20T09:59:40Z", now), "just now");

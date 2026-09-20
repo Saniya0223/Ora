@@ -7,6 +7,8 @@ import { activeSession, cancelSession, completeSession, listTaskSessions, pauseS
 import { IngestionError } from "../lib/errors.js";
 import { createManualBlock, deleteManualBlock, ensurePlanFresh, plannerRange, rangeSchema, removeFutureTaskBlocks, replan, toICS } from "../lib/planner.js";
 import { sourcesDTO } from "../lib/sources.js";
+import { listReviews } from "../lib/reviews.js";
+import { decideReview } from "../lib/review-resolution.js";
 import { requireTables, USER_ID, deleteItem } from "../lib/store.js";
 import { loadProfile, preferencesDTO, profilePreferences, profileTimeZone, requireProfile, savePreferences } from "../lib/student-profile.js";
 import {
@@ -18,6 +20,21 @@ import { z } from "zod";
 
 const ID = "([0-9a-f-]{36})";
 const ANY_ID = "([A-Za-z0-9-]{1,64})";
+
+async function deleteStudentTask(context, task) {
+  await removeFutureTaskBlocks(context.db, context.tables.blocks, task.taskId, context.now);
+  if (context.deps.bucket) await deleteTaskFiles(context.deps, task);
+  if (task.academicEventId) {
+    // Keep the source's stable task ID as a tombstone. Reconciliation and
+    // later Classroom revisions cannot recreate a task the student removed.
+    await mutateTask(context.db, context.tables.tasks, task.taskId, context.now, (row) => {
+      row.deletedAt = context.now.toISOString();
+      row.attachments = [];
+    });
+  } else {
+    await deleteItem(context.db, context.tables.tasks, { userId: USER_ID, taskId: task.taskId });
+  }
+}
 
 // Every route: [method, path pattern, required tables, handler(context, ...params)].
 const routes = [
@@ -34,6 +51,12 @@ const routes = [
     const task = await createManualTask(c.db, c.tables.tasks, c.body(), { now: c.now, timeZone: profileTimeZone(profile) });
     return json(201, { task: toTaskDTO(task, c.taskContext(profile), { detail: true }) });
   }],
+  ["DELETE", "/tasks", ["tasks", "events", "blocks"], async (c) => {
+    validate(z.strictObject({ confirmation: z.literal("DELETE ALL TASKS") }), c.body());
+    const tasks = await reconcileTasks(c.db, c.tables, c.now);
+    for (const task of tasks) await deleteStudentTask(c, task);
+    return json(200, { deleted: tasks.length });
+  }],
   ["GET", `/tasks/${ID}`, ["profile", "tasks"], async (c, id) => c.taskResponse(200, await getTaskRecord(c.db, c.tables.tasks, id))],
   ["PATCH", `/tasks/${ID}`, ["profile", "tasks"], async (c, id) => {
     const profile = await loadProfile(c.db, c.tables.profile);
@@ -41,10 +64,7 @@ const routes = [
   }],
   ["DELETE", `/tasks/${ID}`, ["tasks", "blocks"], async (c, id) => {
     const task = await getTaskRecord(c.db, c.tables.tasks, id);
-    if (task.academicEventId) throw new ApiError(409, "SOURCE_MANAGED", "Tasks from a connected source cannot be deleted. Complete it instead, or it is cancelled when the source cancels it.");
-    await removeFutureTaskBlocks(c.db, c.tables.blocks, id, c.now);
-    if (c.deps.bucket) await deleteTaskFiles(c.deps, task);
-    await deleteItem(c.db, c.tables.tasks, { userId: USER_ID, taskId: id });
+    await deleteStudentTask(c, task);
     return json(200, { deleted: true, id });
   }],
   ["POST", `/tasks/${ID}/complete`, ["profile", "tasks", "blocks"], async (c, id) => {
@@ -137,6 +157,9 @@ const routes = [
   }],
 
   ["GET", "/sources", ["profile"], async (c) => json(200, await sourcesDTO(c.db, c.tables, await loadProfile(c.db, c.tables.profile), c.now))],
+  ["GET", "/reviews", ["reviews"], async (c) => json(200, { reviews: await listReviews(c.db, c.tables.reviews) })],
+  ["POST", `/reviews/${ID}/resolve`, ["reviews", "events", "profile", "syncState"], async (c, id) =>
+    json(200, await decideReview(c.deps, id, c.body(), c.now))],
 ];
 
 const compiled = routes.map(([method, pattern, needs, run]) => ({ method, regex: new RegExp(`^${pattern}$`), needs, run }));

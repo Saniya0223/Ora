@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { z } from "zod";
 import { db, bedrock, s3, textract } from "../lib/clients.js";
-import { prepareUpload, startDocument, finishDocument } from "../lib/documents.js";
+import { prepareUpload, startDocument, finishDocument, documentDownload } from "../lib/documents.js";
 import { timetableSlotSchema } from "../lib/contracts.js";
 import { IngestionError } from "../lib/errors.js";
 import { isAIConfigured } from "../lib/ai-providers.js";
@@ -58,6 +58,11 @@ export async function handleDocuments(request, dependencies) {
       if (!z.uuid().safeParse(path.split("/")[2]).success) throw new IngestionError(400, "INVALID_JOB", "Invalid import identifier.");
       const job = await finishDocument(path.split("/")[2], deps);
       return json(job.status === "PROCESSING" ? 202 : 200, job);
+    }
+    if (method === "GET" && /^\/documents\/[0-9a-f-]+\/download$/.test(path)) {
+      const id = path.split("/")[2];
+      if (!z.uuid().safeParse(id).success) throw new IngestionError(400, "INVALID_JOB", "Invalid import identifier.");
+      return json(200, await documentDownload(id, deps));
     }
     let body;
     try { if ((request.body?.length ?? 0) > 100_000) throw new Error(); body = JSON.parse(request.isBase64Encoded ? Buffer.from(request.body, "base64").toString("utf8") : request.body ?? ""); }
