@@ -2097,6 +2097,103 @@ body:has(.focus-dock) {
 .how-card summary strong { font-size: 13px; }
 .how-card p { font-size: 13px; line-height: 1.6; }
 
+/* Add & Setup follows the source-to-plan workflow rather than a card grid. */
+.setup-page { max-width: 1240px; margin: 0 auto; }
+.setup-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(280px, .85fr);
+  gap: 24px;
+  align-items: stretch;
+  padding: clamp(24px, 3.5vw, 46px);
+  margin-bottom: 18px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: linear-gradient(115deg, #fffdf9 0%, #fffaf3 62%, #f3f0e7 100%);
+}
+.setup-eyebrow, .setup-step-number {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--olive);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+}
+.setup-hero h1 { font-size: clamp(31px, 3vw, 43px); margin: 12px 0; }
+.setup-hero-copy > p { max-width: 580px; color: var(--muted); font-size: 15px; line-height: 1.7; }
+.setup-hero-links { display: flex; flex-wrap: wrap; gap: 12px 22px; margin-top: 26px; }
+.setup-hero-links a, .setup-reminder a {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--olive);
+  font-size: 13px;
+  font-weight: 700;
+}
+.setup-hero-links a:hover, .setup-reminder a:hover { text-decoration: underline; }
+.setup-reminder {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  min-width: 0;
+  padding: 24px;
+  border: 1px solid #e9ddce;
+  border-left: 4px solid var(--red);
+  border-radius: 13px;
+  background: var(--surface);
+}
+.setup-reminder .setup-eyebrow { color: var(--red); }
+.setup-reminder strong { display: block; margin-top: 15px; font-size: 19px; line-height: 1.3; overflow-wrap: anywhere; }
+.setup-reminder p { margin: 8px 0 18px; color: var(--muted); font-size: 13px; }
+.setup-workflow { border-top: 1px solid var(--line); }
+.setup-step {
+  display: grid;
+  grid-template-columns: minmax(200px, .37fr) minmax(0, 1fr);
+  gap: clamp(22px, 3vw, 48px);
+  padding: 30px 0;
+  border-bottom: 1px solid var(--line);
+}
+.setup-step-intro { padding: 7px 0 0 8px; }
+.setup-step-icon {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  margin: 24px 0 15px;
+  border-radius: 11px;
+  color: var(--olive);
+  background: #edf4e2;
+}
+.setup-step:nth-child(2) .setup-step-icon { color: #a85f09; background: #fff0db; }
+.setup-step:nth-child(3) .setup-step-icon { color: var(--red); background: #fcebe9; }
+.setup-step-intro h2 { max-width: 260px; font-size: 24px; line-height: 1.2; }
+.setup-step-intro p { max-width: 290px; margin-top: 12px; color: var(--muted); font-size: 13px; line-height: 1.65; }
+.setup-step-content { min-width: 0; }
+.setup-step-content > .card { padding: clamp(20px, 2.4vw, 30px); }
+.setup-step-content > .quiet-card { background: var(--surface); box-shadow: 0 2px 10px #60523e02; }
+.setup-step-content .source-card { padding: 18px; }
+.setup-how { margin-top: 26px; padding: 18px 22px; background: #f8f0e7; }
+.setup-how summary { align-items: center; }
+.setup-how summary > svg:first-child { margin-top: 0; }
+.setup-page .timetable-editor { margin-top: 26px; }
+@media (max-width: 900px) {
+  .setup-hero { grid-template-columns: 1fr; }
+  .setup-step { grid-template-columns: 1fr; gap: 16px; }
+  .setup-step-intro { padding: 0; }
+  .setup-step-icon { display: none; }
+  .setup-step-intro h2, .setup-step-intro p { max-width: none; }
+  .setup-step-intro h2 { margin-top: 8px; }
+  .setup-step-intro p { margin-top: 5px; }
+}
+@media (max-width: 560px) {
+  .setup-hero { padding: 22px; border-radius: 15px; }
+  .setup-reminder { padding: 18px; }
+  .setup-step { padding: 24px 0; }
+  .setup-step-content > .card { padding: 18px; }
+}
+
 /* --- Task list: finished work recedes --- */
 .task-list-item.is-done { opacity: 0.6; }
 .task-list-item.is-done:hover, .task-list-item.is-done.selected { opacity: 1; }
