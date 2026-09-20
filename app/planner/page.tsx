@@ -8,6 +8,7 @@ import { request, errorMessage } from "../lib/api";
 import {
   addDays,
   clock,
+  clock12h,
   dateKey,
   daySegments,
   placeOverlaps,
@@ -69,7 +70,7 @@ function PlannerScreen() {
     : 1260;
   const firstHour = Math.floor(earliest / 60);
   const lastHour = Math.min(24, Math.ceil(latest / 60));
-  const rowHeight = 64;
+  const rowHeight = 88;
   const height = (lastHour - firstHour) * rowHeight;
   async function replan() {
     setBusy(true);
@@ -106,7 +107,7 @@ function PlannerScreen() {
             >
               <ChevronLeft size={20} />
             </button>
-            <strong style={{ fontSize: '16px' }}>
+            <strong style={{ fontSize: '19px' }}>
               {dateLabel(from, { day: "numeric", month: "short" })}
               {mode === "week"
                 ? ` – ${dateLabel(to, { day: "numeric", month: "short", year: "numeric" })}`
@@ -158,15 +159,15 @@ function PlannerScreen() {
           <div style={{ background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: '20px', overflow: 'hidden' }}>
             <CapacityWarning capacity={data.capacity} />
             <div className={`calendar-scroll ${mode}`} style={{ padding: '0' }}>
-              <div
-                className="calendar"
-                style={{
-                  gridTemplateColumns: `60px repeat(${dates.length}, minmax(0, 1fr))`,
-                  background: '#fffdf9'
-                }}
-              >
-                <div className="calendar-corner" style={{ borderRight: '1px solid var(--line)', borderBottom: '1px solid var(--line)' }}>
-                  <span className="tiny muted" style={{ display: 'block', padding: '16px 8px', textAlign: 'center' }}>
+                <div
+                  className="calendar"
+                  style={{
+                    gridTemplateColumns: `75px repeat(${dates.length}, minmax(0, 1fr))`,
+                    background: '#fff'
+                  }}
+                >
+                  <div className="calendar-corner" style={{ borderRight: '1px solid var(--line)', borderBottom: '1px solid var(--line)' }}>
+                  <span className="muted" style={{ display: 'block', padding: '16px 6px', textAlign: 'center', fontSize: '12px' }}>
                     {zone.split("/").pop()?.replaceAll("_", " ")}
                   </span>
                 </div>
@@ -178,22 +179,22 @@ function PlannerScreen() {
                     style={{ 
                       padding: '16px 12px', 
                       borderBottom: '1px solid var(--line)',
-                      background: d === today ? '#f9fbf4' : 'transparent',
+                      background: d === today ? 'transparent' : 'transparent',
                       borderLeft: '1px solid var(--line)'
                     }}
                   >
-                    <strong style={{ fontSize: '14px', color: d === today ? 'var(--olive)' : 'var(--ink)' }}>{dateLabel(d, { weekday: "short" })}</strong>
-                    <span style={{ fontSize: '13px', display: 'block', marginTop: '2px', color: 'var(--muted)' }}>
+                    <strong style={{ fontSize: '15px', fontWeight: 700, color: d === today ? 'var(--olive)' : 'var(--ink)' }}>{dateLabel(d, { weekday: "short" })}</strong>
+                    <span style={{ fontSize: '14px', display: 'block', marginTop: '3px', color: 'var(--muted)', fontWeight: 400 }}>
                       {dateLabel(d, { month: "short", day: "numeric" })}
                     </span>
                   </button>
                 ))}
-                <div className="deadline-label tiny" style={{ borderRight: '1px solid var(--line)', borderBottom: '1px solid var(--line)', padding: '12px 8px' }}>Due</div>
+                <div className="deadline-label" style={{ borderRight: '1px solid var(--line)', borderBottom: '1px solid var(--line)', padding: '12px 8px', fontSize: '13px' }}>Due</div>
                 {dates.map((d) => (
                   <div
                     key={d}
                     className={`deadline-cell ${d === today ? "is-today" : ""}`}
-                    style={{ borderLeft: '1px solid var(--line)', borderBottom: '1px solid var(--line)', background: d === today ? '#f9fbf4' : 'transparent', padding: '8px' }}
+                    style={{ borderLeft: '1px solid var(--line)', borderBottom: '1px solid var(--line)', background: d === today ? 'transparent' : 'transparent', padding: '8px' }}
                   >
                     {data.deadlines
                       .filter((t) => dateKey(t.deadline, zone) === d)
@@ -203,16 +204,19 @@ function PlannerScreen() {
                           key={t.taskId}
                           href={`/tasks?task=${t.taskId}`}
                           title={`${t.title} · ${clock(t.deadline, zone)}`}
-                          style={{ borderRadius: '6px', padding: '4px 8px', fontSize: '11px', display: 'block', marginBottom: '4px', background: t.status === "COMPLETED" ? '#f0ece4' : '#fff0db', color: t.status === "COMPLETED" ? 'var(--muted)' : '#a85f09' }}
+                          style={{ borderRadius: '6px', padding: '8px 10px', display: 'block', marginBottom: '4px', background: t.status === "COMPLETED" ? '#f0ece4' : '#fff0db', color: t.status === "COMPLETED" ? 'var(--muted)' : '#a85f09' }}
                         >
-                          {t.title} · {clock(t.deadline, zone)}
+                          <strong style={{ display: 'block', fontWeight: 700, whiteSpace: 'normal', wordBreak: 'break-word', fontSize: '14px', lineHeight: '1.3' }}>{t.title}</strong>
+                          <span style={{ fontSize: '13px', fontWeight: 500, opacity: 0.7, display: 'flex', alignItems: 'center', gap: '3px', marginTop: '1px' }}>
+                            {clock12h(t.deadline, zone)}
+                          </span>
                         </Link>
                       ))}
                   </div>
                 ))}
                 <div className="time-axis" style={{ height, borderRight: '1px solid var(--line)' }}>
                   {Array.from({ length: lastHour - firstHour }, (_, i) => (
-                    <span key={i} style={{ top: i * rowHeight, paddingRight: '12px', color: 'var(--muted)', fontSize: '12px' }}>
+                    <span key={i} style={{ top: i * rowHeight, paddingRight: '10px', color: 'var(--muted)', fontSize: '13px', fontWeight: 500 }}>
                       {String(firstHour + i).padStart(2, "0")}:00
                     </span>
                   ))}
@@ -221,7 +225,7 @@ function PlannerScreen() {
                   <div
                     className={`calendar-day ${d === today ? "is-today" : ""}`}
                     key={d}
-                    style={{ height, backgroundSize: `100% ${rowHeight}px`, borderLeft: '1px solid var(--line)', background: d === today ? '#f9fbf4' : 'transparent', backgroundImage: `linear-gradient(var(--line) 1px, transparent 1px)` }}
+                    style={{ height, backgroundSize: `100% ${rowHeight}px`, borderLeft: '1px solid var(--line)', background: 'transparent', backgroundImage: `linear-gradient(var(--line) 1px, transparent 1px)` }}
                   >
                     {segments[index].map((item) => (
                       <button
@@ -232,30 +236,28 @@ function PlannerScreen() {
                             ((item.startMinute - firstHour * 60) / 60) *
                             rowHeight,
                           height: Math.max(
-                            22,
+                            42,
                             ((item.endMinute - item.startMinute) / 60) *
                               rowHeight -
                               3,
                           ),
-                          left: `calc(${(item.column / item.columns) * 100}% + 3px)`,
-                          width: `calc(${100 / item.columns}% - 6px)`,
-                          borderRadius: '8px',
-                          border: 'none',
-                          padding: '6px 8px',
-                          boxShadow: '0 2px 5px rgba(0,0,0,0.04)',
+                          left: `calc(${(item.column / item.columns) * 100}% + 4px)`,
+                          width: `calc(${100 / item.columns}% - 8px)`,
                         }}
                         onClick={() => setSelected(item)}
-                        title={`${item.title}, ${clock(item.start, zone)}–${clock(item.end, zone)}${item.location ? `, ${item.location}` : ""}`}
+                        title={`${item.title}, ${clock12h(item.start, zone)} - ${clock12h(item.end, zone)}${item.location ? `, ${item.location}` : ""}`}
                       >
-                        <strong style={{ fontSize: '12px' }}>{item.title}</strong>
-                        <span style={{ fontSize: '11px', opacity: 0.8 }}>
-                          {clock(item.start, zone)} – {clock(item.end, zone)}
+                        <strong>{item.title}</strong>
+                        <span className="block-time">
+                          <span className="time-start">{clock12h(item.start, zone)}</span>
+                          <span className="time-separator">-</span>
+                          <span className="time-end">{clock12h(item.end, zone)}</span>
                         </span>
-                        {mode === "day" && item.location && (
-                          <span style={{ fontSize: '11px', opacity: 0.8 }}>{item.location}</span>
+                        {item.location && (
+                          <span>{item.location}</span>
                         )}
                         {item.outsidePreferredWindow && (
-                          <span style={{ fontSize: '10px', color: '#c45846' }}>Outside preferred hours</span>
+                          <span className="block-warning">Outside preferred hours</span>
                         )}
                       </button>
                     ))}
@@ -272,8 +274,8 @@ function PlannerScreen() {
                   ["event", "Club / Event"],
                   ["deadline", "Task / Deadline"],
                 ].map(([key, label]) => (
-                  <span key={key} style={{ fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <i className={`legend-${key}`} style={{ width: '10px', height: '10px', borderRadius: '3px' }} />
+                  <span key={key} style={{ fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <i className={`legend-${key}`} style={{ width: '14px', height: '14px', borderRadius: '4px' }} />
                     {label}
                   </span>
                 ))}
@@ -305,9 +307,9 @@ function PlannerScreen() {
                 >
                   <X size={16} />
                 </button>
-                <strong style={{ fontSize: '16px', display: 'block', marginBottom: '4px' }}>{selected.title}</strong>
+                <strong style={{ fontSize: '19px', display: 'block', marginBottom: '4px' }}>{selected.title}</strong>
                 <p style={{ margin: '0 0 8px' }}>
-                  {clock(selected.start, zone)} – {clock(selected.end, zone)}{" "}
+                  {clock12h(selected.start, zone)} - {clock12h(selected.end, zone)}{" "}
                   {selected.location && `· ${selected.location}`}
                 </p>
                 {selected.outsidePreferredWindow && (

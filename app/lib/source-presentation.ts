@@ -69,14 +69,14 @@ export function syncSummary(classroom: Sources["classroom"], now = Date.now()): 
   if (classroom.connection !== "CONNECTED" || health === "DISCONNECTED")
     return { tone: "warn", title: "Not connected", detail: "Connect Google Classroom to bring in your coursework.", changes: [] };
   if (health === "REAUTH_REQUIRED" || sync.status === "REAUTH_REQUIRED")
-    return { tone: "error", title: "Reconnect Google Classroom", detail: "CampusFlow's access expired. Reconnect to keep syncing.", changes: [] };
+    return { tone: "error", title: "Reconnect Google Classroom", detail: "Ora's access expired. Reconnect to keep syncing.", changes: [] };
   if (sync.status === "SYNCING" || health === "SYNCING")
     return { tone: "busy", title: "Syncing Classroom…", detail: "Checking for new announcements and coursework", changes: [] };
   if (health === "NEVER_SYNCED" || sync.status === "NEVER_SYNCED")
     return { tone: "warn", title: "Not synced yet", detail: "Sync now to bring in your Classroom work.", changes: [] };
   if (sync.status === "ERROR" || health === "ERROR") {
     const detail = sync.lastErrorCode === "CLASSROOM_ACCESS_DENIED"
-      ? "CampusFlow can no longer read a selected course. Reconnect or choose courses again."
+      ? "Ora can no longer read a selected course. Reconnect or choose courses again."
       : "Classroom couldn't be synced right now. Try again shortly.";
     return { tone: "error", title: "Sync didn't finish", detail, changes: [] };
   }

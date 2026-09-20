@@ -50,7 +50,7 @@ async function response(
       );
     throw new ApiError(
       "NETWORK_ERROR",
-      "Cannot reach CampusFlow. Check your connection and try again.",
+      "Cannot reach Ora. Check your connection and try again.",
     );
   }
   if (!result.ok) {

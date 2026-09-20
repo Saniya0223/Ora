@@ -51,7 +51,7 @@ export function ConnectedSources({ onTimetable }: { onTimetable: () => void }) {
   return (
     <section className="card" id="sources">
       <h2>Connected Sources</h2>
-      <p className="muted">Where CampusFlow gets your coursework and classes.</p>
+      <p className="muted">Where Ora gets your coursework and classes.</p>
       <ErrorBox message={error || resource.error} retry={resource.refresh} />
       {resource.loading && !source && <Skeleton rows={2} />}{" "}
       {source && <ClassroomCard
@@ -84,7 +84,7 @@ export function ConnectedSources({ onTimetable }: { onTimetable: () => void }) {
                 </small>
               </>
             ) : (
-              <p>Add your timetable so CampusFlow can plan around your classes.</p>
+              <p>Add your timetable so Ora can plan around your classes.</p>
             )}
           </div>
           <button className="button secondary small" onClick={onTimetable}>

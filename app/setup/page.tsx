@@ -19,41 +19,6 @@ import { useResource } from "../lib/data";
 import { deadline } from "../lib/presentation";
 import type { TaskList } from "../lib/types";
 
-function DeadlineReminder() {
-  const { timezone } = useStudent();
-  const tasks = useResource<TaskList>("/tasks?view=upcoming&sort=deadline");
-  const next = tasks.data?.tasks[0];
-
-  return (
-    <aside className="setup-reminder" aria-label="Next deadline reminder">
-      <span className="setup-eyebrow">
-        <CalendarDays size={15} aria-hidden="true" /> Next deadline
-      </span>
-      {next ? (
-        <>
-          <strong>{next.title}</strong>
-          <p>
-            {next.course?.name ? `${next.course.name} · ` : ""}
-            {deadline(next.deadline, timezone)}
-          </p>
-          <Link href={`/tasks?task=${encodeURIComponent(next.id)}`}>
-            Open task brief <ArrowUpRight size={15} aria-hidden="true" />
-          </Link>
-        </>
-      ) : (
-        <>
-          <strong>{tasks.loading ? "Checking your deadlines…" : tasks.error ? "Deadlines unavailable" : "All clear for now"}</strong>
-          <p>
-            {tasks.error
-              ? "Open Tasks to check your latest work."
-              : "Upcoming work will appear here when a task has a due date."}
-          </p>
-          {tasks.error && <Link href="/tasks">Open tasks <ArrowUpRight size={15} aria-hidden="true" /></Link>}
-        </>
-      )}
-    </aside>
-  );
-}
 
 export default function SetupPage() {
   const [manage, setManage] = useState(false);
@@ -85,7 +50,6 @@ export default function SetupPage() {
             <Link href="/planner">See your plan <ArrowUpRight size={15} aria-hidden="true" /></Link>
           </div>
         </div>
-        <DeadlineReminder />
       </header>
 
       <div className="setup-workflow">
@@ -136,11 +100,11 @@ export default function SetupPage() {
       <details className="how-card setup-how">
         <summary>
           <Lightbulb size={18} aria-hidden="true" />
-          <strong>How does CampusFlow keep tasks current?</strong>
+          <strong>How does Ora keep tasks current?</strong>
           <ChevronDown size={16} aria-hidden="true" />
         </summary>
         <p>
-          CampusFlow turns each Classroom post into one task, updates that task
+          Ora turns each Classroom post into one task, updates that task
           when the post changes, and plans study time around your classes. Open
           a task brief to see its deadline and what changed at the source.
         </p>

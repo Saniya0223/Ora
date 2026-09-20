@@ -51,13 +51,8 @@ export default function Shell({ children }: { children: React.ReactNode }) {
         </a>
         <div className="app-layout">
           <aside className="app-sidebar">
-            <Link className="sidebar-brand" href="/" aria-label="CampusFlow dashboard">
-              <div className="brand-icon-new">
-                <GraduationCap size={22} strokeWidth={2.5} />
-              </div>
-              <div className="brand-text">
-                <strong>CampusFlow</strong>
-              </div>
+            <Link className="sidebar-brand" href="/" aria-label="Ora dashboard" style={{ paddingLeft: 0 }}>
+              <img src="/ora-logo.png" alt="Ora" style={{ height: '72px', width: 'auto', marginLeft: '-32px' }} />
             </Link>
 
             <nav className="sidebar-nav" aria-label="Main navigation">

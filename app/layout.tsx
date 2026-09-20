@@ -6,7 +6,7 @@ import Shell from "./components/shell";
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 
 export const metadata: Metadata = {
-  title: "CampusFlow | Your academic day",
+  title: "Ora | Your academic day",
   description:
     "One current plan for your classes, deadlines, and academic notices.",
 };

@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { useState } from "react";
-import type { Dashboard, TaskListItem } from "./lib/types";
+import type { Dashboard, TaskListItem, TaskList } from "./lib/types";
 import { useResource, invalidate } from "./lib/data";
 import { request, errorMessage } from "./lib/api";
 import { clock, deadline, duration } from "./lib/presentation";
@@ -13,7 +13,43 @@ import {
   PriorityBadge,
   Skeleton,
 } from "./components/ui";
-import { CheckSquare, Clock, GraduationCap, Play } from "lucide-react";
+import { CheckSquare, Clock, GraduationCap, Play, CalendarDays } from "lucide-react";
+
+function NextDeadlineCard({ timezone }: { timezone: string }) {
+  const tasks = useResource<TaskList>("/tasks?view=upcoming&sort=deadline");
+  const next = tasks.data?.tasks[0];
+
+  return (
+    <div className="summary-card" style={{ background: '#f5f4f8', border: '1px solid #e5e4ea' }}>
+      <span className="summary-icon" style={{ background: '#e5e4ea', color: '#555466' }}>
+        <CalendarDays size={24} strokeWidth={2.5} />
+      </span>
+      <div>
+        <p style={{ fontWeight: 600, color: '#555466' }}>Next deadline</p>
+        {next ? (
+          <>
+            <strong className="class-title" style={{ color: '#333244', fontSize: '20px' }}>
+              {next.title}
+            </strong>
+            <small style={{ color: '#666578', fontWeight: 600, display: 'block' }}>
+              {next.course?.name ? `${next.course.name} · ` : ""}
+              {deadline(next.deadline, timezone)}
+            </small>
+          </>
+        ) : (
+          <>
+            <strong className="class-title" style={{ color: '#333244', fontSize: '20px' }}>
+              {tasks.loading ? "Checking..." : "All clear"}
+            </strong>
+            <small style={{ color: '#666578', fontWeight: 600, display: 'block' }}>
+              {tasks.error ? "Unavailable" : "No upcoming deadlines"}
+            </small>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
 
 // The next class may be on a later day (e.g. Monday, seen on a Sunday).
 function classDay(start: string, now: string, zone: string) {
@@ -50,7 +86,7 @@ export default function DashboardPage() {
     return (
       <div className="animate-in fade-in">
         <div className="page-heading dashboard-heading">
-          <h1>Dashboard</h1>
+          <h1 style={{ fontSize: '38px', color: '#b33d25', fontWeight: 600 }}>No more missed deadlines!</h1>
         </div>
         <ErrorBox message={error} retry={refresh} />
         {loading && <Skeleton rows={5} />}
@@ -63,8 +99,8 @@ export default function DashboardPage() {
     <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
       <div className="page-heading dashboard-heading">
         <div>
-          <h1>Dashboard</h1>
-          <p className="today-date">
+          <h1 style={{ fontSize: '42px', color: '#b33d25', fontWeight: 600, letterSpacing: '-0.5px' }}>No more missed deadlines!</h1>
+          <p className="today-date" style={{ fontSize: '20px', fontWeight: 600, color: 'var(--muted)', marginTop: '8px' }}>
             {new Intl.DateTimeFormat("en-GB", {
               timeZone: zone,
               weekday: "long",
@@ -79,7 +115,7 @@ export default function DashboardPage() {
       <ErrorBox message={error || actionError} retry={refresh} />
       
       <section className="summary-grid" aria-label="Daily summary">
-        <div className="summary-card" style={{ background: '#Edf4e2', border: 'none' }}>
+        <div className="summary-card" style={{ background: '#Edf4e2', border: '1px solid #dce8c5' }}>
           <span className="summary-icon" style={{ background: '#dce8c5', color: '#4a622a' }}>
             <CheckSquare size={24} strokeWidth={2.5} />
           </span>
@@ -91,7 +127,7 @@ export default function DashboardPage() {
             </small>
           </div>
         </div>
-        <div className="summary-card" style={{ background: '#fff0db', border: 'none' }}>
+        <div className="summary-card" style={{ background: '#fff0db', border: '1px solid #ffe0b2' }}>
           <span className="summary-icon" style={{ background: '#ffe0b2', color: '#a85f09' }}>
             <Clock size={24} strokeWidth={2.5} />
           </span>
@@ -105,7 +141,7 @@ export default function DashboardPage() {
             </small>
           </div>
         </div>
-        <div className="summary-card" style={{ background: '#fcebe9', border: 'none' }}>
+        <div className="summary-card" style={{ background: '#fcebe9', border: '1px solid #f6d5cf' }}>
           <span className="summary-icon" style={{ background: '#f6d5cf', color: '#ab3925' }}>
             <GraduationCap size={24} strokeWidth={2.5} />
           </span>
@@ -125,6 +161,7 @@ export default function DashboardPage() {
             </small>
           </div>
         </div>
+        <NextDeadlineCard timezone={zone} />
       </section>
 
       <div className="dashboard-grid" style={{ gap: '32px', marginTop: '32px' }}>

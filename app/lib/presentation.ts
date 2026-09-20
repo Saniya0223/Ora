@@ -19,6 +19,14 @@ export function clock(value: string, timezone: string) {
     hourCycle: "h23",
   }).format(new Date(value));
 }
+export function clock12h(value: string, timezone: string) {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  }).format(new Date(value)).replace(" ", "").toLowerCase();
+}
 export function dateKey(value: string | Date, timezone: string) {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: timezone,
