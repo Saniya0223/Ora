@@ -543,7 +543,10 @@ async function applyItem(item, { notice, events, current, receivedAt, context, s
       const version = target.sourceMeta?.versions?.[notice.sourceRef];
       if (version?.updatedAt && notice.updatedAt && Date.parse(version.updatedAt) > Date.parse(notice.updatedAt)) return target;
       change.sourceMeta = metadata(target);
-      change.sourceUrl = classroomSourceUrl(notice.sourceUrl) ?? target.sourceUrl ?? null;
+      // "Open in Classroom" must lead to the post this obligation came from. A follow-up
+      // post that edits it is shown under "What changed", and never replaces that link.
+      const ownPost = !target.sourceRef || notice.sourceRef === target.sourceRef;
+      if (ownPost || !target.sourceUrl) change.sourceUrl = classroomSourceUrl(notice.sourceUrl) ?? target.sourceUrl ?? null;
     } else if (notice.sourceRef && notice.sourceRef !== target.sourceRef) {
       const linked = target.linkedSources ?? [];
       if (!linked.some((entry) => entry.sourceType === notice.sourceType && entry.sourceRef === notice.sourceRef)) {

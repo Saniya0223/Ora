@@ -458,8 +458,8 @@ Resources:
               - !Ref AWS::NoValue
 
   # Tasks, focus sessions, planning, dashboard, preferences, and sources.
-  # AcademicEvents and ClassroomSyncState are read-only here: the student layer
-  # can never rewrite source-backed truth.
+  # Confirmed reviews use the truth engine to write AcademicEvents and clear
+  # Classroom review receipts; ordinary task edits still protect source fields.
   StudentApiFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -498,6 +498,9 @@ Resources:
         - DynamoDBCrudPolicy:
             TableName: !Ref SourceReviews
         - Statement:
+            - Effect: Allow
+              Action: [dynamodb:PutItem, dynamodb:UpdateItem]
+              Resource: !GetAtt AcademicEvents.Arn
             - Effect: Allow
               Action: dynamodb:UpdateItem
               Resource: !GetAtt ClassroomSyncState.Arn
