@@ -134,32 +134,22 @@ AI output is validated against structured contracts before use. Study block plac
 
 ## Screenshots
 
-Save screenshots under `docs/screenshots/`, then replace each placeholder with its commented Markdown image line. Images remain commented until files are added, so the README does not show broken images.
-
 ### Dashboard
 
-> **Screenshot placeholder:** Academic overview, upcoming deadlines, and today's plan.
-
-<!-- ![Ora dashboard](docs/screenshots/dashboard.png) -->
+![Ora dashboard](docs/dashboard.png)
 
 ### Tasks and task details
 
-> **Screenshot placeholder:** Task list and an open task showing source details, notes, checklist, and progress.
-
-<!-- ![Task management and task details](docs/screenshots/task.png) -->
+![Task management and task details](docs/task.png)
 
 ### Study planner
 
-> **Screenshot placeholder:** Weekly timetable with classes, generated study blocks, and deadlines.
-
-<!-- ![Weekly study planner](docs/screenshots/planner.png) -->
+![Weekly study planner](docs/planner.png)
 
 
 ### Add & Setup
 
-> **Screenshot placeholder:** Notice input, timetable setup, or connected Google Classroom courses.
-
-<!-- ![Add and setup screen](docs/screenshots/setup.png) -->
+![Add and setup screen](docs/setup.png)
 
 
 ## Architecture
