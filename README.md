@@ -24,9 +24,7 @@ The current web interface is branded **Ora**; the repository and backend use the
     - [Dashboard](#dashboard)
     - [Tasks and task details](#tasks-and-task-details)
     - [Study planner](#study-planner)
-    - [Focus session](#focus-session)
     - [Add \& Setup](#add--setup)
-    - [Notice review](#notice-review)
   - [Architecture](#architecture)
   - [Getting started](#getting-started)
     - [Prerequisites](#prerequisites)
@@ -148,7 +146,7 @@ Save screenshots under `docs/screenshots/`, then replace each placeholder with i
 
 > **Screenshot placeholder:** Task list and an open task showing source details, notes, checklist, and progress.
 
-<!-- ![Task management and task details](docs/screenshots/tasks.png) -->
+<!-- ![Task management and task details](docs/screenshots/task.png) -->
 
 ### Study planner
 
@@ -156,11 +154,6 @@ Save screenshots under `docs/screenshots/`, then replace each placeholder with i
 
 <!-- ![Weekly study planner](docs/screenshots/planner.png) -->
 
-### Focus session
-
-> **Screenshot placeholder:** Active focus timer and task progress.
-
-<!-- ![Active focus session](docs/screenshots/focus-session.png) -->
 
 ### Add & Setup
 
@@ -168,11 +161,6 @@ Save screenshots under `docs/screenshots/`, then replace each placeholder with i
 
 <!-- ![Add and setup screen](docs/screenshots/setup.png) -->
 
-### Notice review
-
-> **Screenshot placeholder:** An uncertain notice with possible matches and confirmation choices.
-
-<!-- ![Notice review and confirmation](docs/screenshots/notice-review.png) -->
 
 ## Architecture
 
